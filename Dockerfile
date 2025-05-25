@@ -1,26 +1,42 @@
-FROM python:3.11-bullseye
+FROM python:3.11-slim-bullseye
 
-# Create app directory and set working directory
+# Set environment variables
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    PYTHONPATH=/app \
+    PIP_NO_CACHE_DIR=1 \
+    PIP_DISABLE_PIP_VERSION_CHECK=1 \
+    PIP_DEFAULT_TIMEOUT=100 \
+    TF_CPP_MIN_LOG_LEVEL=2
+
+# Set work directory
 WORKDIR /app
 
 # Install system dependencies
 RUN apt-get update && apt-get install -y --no-install-recommends \
+    build-essential \
+    libssl-dev \
+    libffi-dev \
+    python3-dev \
+    curl \
     && rm -rf /var/lib/apt/lists/*
 
+# Create a non-root user and set permissions
+RUN useradd -m appuser && \
+    mkdir -p /app/storage && \
+    chown -R appuser:appuser /app
+
+# Copy requirements first to leverage Docker cache
+COPY --chown=appuser:appuser requirements.txt .
+
 # Install Python dependencies
-COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
 # Copy application code
-COPY . .
+COPY --chown=appuser:appuser . .
 
 # Make entrypoint script executable
 RUN chmod +x /app/entrypoint.sh
-
-# Create a non-root user and set permissions
-RUN adduser --disabled-password --gecos "" appuser \
-    && mkdir -p /app/storage \
-    && chown -R appuser:appuser /app
 
 # Switch to non-root user
 USER appuser

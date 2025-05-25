@@ -11,31 +11,59 @@ services:
         env_file:
             - .env
         environment:
-            - PYTHONUNBUFFERED=1
-            - PYTHONPATH=/app
+            - ENVIRONMENT=${ENVIRONMENT:-development}
+            - DEBUG=${DEBUG:-0}
+            - LOG_LEVEL=${LOG_LEVEL:-INFO}
+            - REDIS_HOST=redis
+            - REDIS_PORT=6379
         volumes:
-            - .:/app
-            - /app/__pycache__
+            - ./src:/app/src
+            - ./entrypoint.sh:/app/entrypoint.sh
             - calendar-storage:/app/storage
         depends_on:
-            - redis
+            redis:
+                condition: service_healthy
         networks:
             - calendar-network
+        healthcheck:
+            test: ["CMD", "curl", "-f", "http://localhost:8008/health"]
+            interval: 30s
+            timeout: 10s
+            retries: 3
+            start_period: 20s
 
     tensorflow-service:
-        image: tensorflow/tensorflow:latest
+        image: tensorflow/tensorflow:2.13.0
         restart: unless-stopped
+        ports:
+            - "8501:8501"
+        environment:
+            - TF_CPP_MIN_LOG_LEVEL=2
+        volumes:
+            - ./models:/models
         networks:
             - calendar-network
+        healthcheck:
+            test: ["CMD", "python", "-c", "import tensorflow as tf; print(tf.__version__)"]
+            interval: 30s
+            timeout: 10s
+            retries: 3
 
     redis:
-        image: redis:alpine
+        image: redis:7-alpine
         restart: unless-stopped
-        command: redis-server --appendonly yes
+        command: redis-server --appendonly yes --requirepass ${REDIS_PASSWORD:-}
         volumes:
             - redis-data:/data
+        environment:
+            - REDIS_PASSWORD=${REDIS_PASSWORD:-}
         networks:
             - calendar-network
+        healthcheck:
+            test: ["CMD", "redis-cli", "ping"]
+            interval: 10s
+            timeout: 5s
+            retries: 5
 
 networks:
     calendar-network:
