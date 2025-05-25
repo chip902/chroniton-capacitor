@@ -1,0 +1,31 @@
+{
+	"agent_id": "outlook-mac-agent",
+	"agent_name": "Outlook for Mac",
+	"environment": "Local",
+	"central_api_url": "http://localhost:8008",
+	"sync_interval_minutes": 30,
+	"enable_bidirectional_sync": true,
+	"calendar_sources": [
+		{
+			"type": "outlook_mac",
+			"name": "Work Calendar (john.doe@company.com)",
+			"folder_id": "1",
+			"account_uid": "1",
+			"allow_metadata_updates": true
+		},
+		{
+			"type": "outlook_mac",
+			"name": "Team Calendar (team@company.com)",
+			"folder_id": "3",
+			"account_uid": "2",
+			"allow_metadata_updates": true
+		},
+		{
+			"type": "outlook_mac",
+			"name": "Sarah's Calendar (sarah@company.com)",
+			"folder_id": "5",
+			"account_uid": "3",
+			"allow_metadata_updates": true
+		}
+	]
+}

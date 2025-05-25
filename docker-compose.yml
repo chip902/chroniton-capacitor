@@ -1,0 +1,35 @@
+version: '3.8'
+
+services:
+  calendar-service:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    ports:
+      - "8008:8008"
+    env_file:
+      - .env
+    volumes:
+      - calendar-storage:/app/storage
+    depends_on:
+      - redis
+    networks:
+      - calendar-network
+
+  redis:
+    image: redis:alpine
+    restart: unless-stopped
+    command: redis-server --appendonly yes
+    volumes:
+      - redis-data:/data
+    networks:
+      - calendar-network
+
+networks:
+  calendar-network:
+    driver: bridge
+
+volumes:
+  calendar-storage:
+  redis-data:
