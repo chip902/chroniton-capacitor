@@ -1,0 +1,3 @@
+# constraints.txt
+tensorflow==2.8.0
+agents==1.4.0
