@@ -10,7 +10,12 @@ services:
             - "8008:8008"
         env_file:
             - .env
+        environment:
+            - PYTHONUNBUFFERED=1
+            - PYTHONPATH=/app
         volumes:
+            - .:/app
+            - /app/__pycache__
             - calendar-storage:/app/storage
         depends_on:
             - redis
