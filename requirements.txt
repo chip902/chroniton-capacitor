@@ -1,29 +1,29 @@
 # Core dependencies
-python-dotenv>=1.0.0
-uvicorn>=0.23.0
-fastapi>=0.100.0
-pydantic>=2.0.0
-pydantic-settings>=2.0.0
-httpx>=0.24.0
-python-jose>=3.3.0
-pytest>=7.3.1
-tenacity>=8.2.2
+python-dotenv
+uvicorn
+fastapi
+pydantic
+pydantic-settings
+httpx
+python-jose
+pytest
+tenacity
 
 # MCP integration dependencies
-openai-agents>=0.0.15
-agents>=0.0.15
+openai-agents
+agents
 
 # Async support
-asyncio>=3.4.3
-aiohttp>=3.8.5
-aioredis>=2.0.0
+asyncio
+aiohttp
+aioredis
 
 # Google Calendar integration
-google-auth-oauthlib>=0.4.6
-google-api-python-client>=2.47.0
+google-auth-oauthlib
+google-api-python-client
 
 # Microsoft Calendar integration
-msal>=1.16.0
+msal
 
 # Caching and storage
-redis>=4.6.0
+redis
