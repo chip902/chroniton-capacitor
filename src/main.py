@@ -63,7 +63,7 @@ try:
     print("API router imported")
 except ImportError:
     try:
-        from src.api.router import router as api_router
+        from api.router import router as api_router
         print("API router imported with src prefix")
     except ImportError:
         print("Warning: Unable to import API router")
@@ -71,7 +71,7 @@ except ImportError:
         print(f"Error importing API router: {e}")
 
 try:
-    from api.sync_router import router as sync_router
+    from sync_router import router as sync_router
     print("Sync router imported")
 except ImportError:
     try:
@@ -87,7 +87,7 @@ try:
     print("Calendar server setup imported")
 except ImportError:
     try:
-        from src.mcp.calendar_server import setup_calendar_mcp_server
+        from mcp.calendar_server import setup_calendar_mcp_server
         print("Calendar server setup imported with src prefix")
     except ImportError:
         print("Warning: Unable to import calendar server setup")
@@ -99,7 +99,7 @@ try:
     print("Sync storage manager imported")
 except ImportError:
     try:
-        from src.sync.storage import SyncStorageManager
+        from sync.storage import SyncStorageManager
         print("Sync storage manager imported with src prefix")
     except ImportError:
         print("Warning: Unable to import sync storage manager")
@@ -111,7 +111,7 @@ try:
     print("Calendar sync controller imported")
 except ImportError:
     try:
-        from src.sync.controller import CalendarSyncController
+        from sync.controller import CalendarSyncController
         print("Calendar sync controller imported with src prefix")
     except ImportError:
         print("Warning: Unable to import calendar sync controller")
@@ -123,7 +123,7 @@ try:
     print("Settings imported")
 except ImportError:
     try:
-        from src.utils.config import settings
+        from utils.config import settings
         print("Settings imported with src prefix")
     except ImportError:
         print("Warning: Unable to import settings")
@@ -139,6 +139,8 @@ app = FastAPI(
 )
 
 # Exception handler for application errors
+
+
 @app.exception_handler(Exception)
 async def generic_exception_handler(request: Request, exc: Exception):
     print(f"Global exception handler caught: {exc}")
@@ -207,6 +209,7 @@ sync_controller = None
 # Background task for periodic sync
 sync_task = None
 
+
 async def periodic_sync(interval_minutes: int = 60):
     """Run periodic synchronization"""
     print(f"Starting periodic sync with {interval_minutes} minute interval")
@@ -215,7 +218,7 @@ async def periodic_sync(interval_minutes: int = 60):
             # Wait for the specified interval
             print(f"Waiting {interval_minutes} minutes until next sync")
             await asyncio.sleep(interval_minutes * 60)
-            
+
             # Run synchronization
             print("Starting calendar synchronization")
             if sync_controller:
@@ -234,53 +237,58 @@ async def periodic_sync(interval_minutes: int = 60):
             print(f"Error in periodic sync: {e}")
             # Continue with the loop after error
             # Add a short sleep to avoid tight loop in case of repeated errors
-            await asyncio.sleep(60)  # Wait 1 minute before retrying after error
+            # Wait 1 minute before retrying after error
+            await asyncio.sleep(60)
+
 
 @app.on_event("startup")
 async def startup_event():
     global calendar_mcp_server, sync_storage, sync_controller, sync_task
-    
+
     # Initialize the Calendar MCP server if agents module is available
     if agents_available:
         try:
             calendar_mcp_server = await setup_calendar_mcp_server()
             print(f"Calendar MCP server started: {calendar_mcp_server.name}")
-            
+
             # List available tools to verify connection
             tools = await calendar_mcp_server.list_tools()
-            print(f"Found {len(tools)} tools available from Calendar MCP server")
+            print(
+                f"Found {len(tools)} tools available from Calendar MCP server")
         except Exception as e:
             print(f"Failed to initialize MCP server: {e}")
             calendar_mcp_server = None
     else:
         print("Skipping MCP server initialization as agents module is not available")
         calendar_mcp_server = None
-    
+
     # Initialize sync storage
     if SyncStorageManager is not None:
         sync_storage = SyncStorageManager()
         await sync_storage.initialize()
         print("Sync storage initialized")
-        
+
         # Initialize sync controller
         if CalendarSyncController is not None:
             sync_controller = CalendarSyncController(sync_storage)
             print("Sync controller initialized")
-            
+
             # Start periodic sync task
             sync_interval = int(os.environ.get("SYNC_INTERVAL_MINUTES", "60"))
             sync_task = asyncio.create_task(periodic_sync(sync_interval))
             print(f"Periodic sync scheduled every {sync_interval} minutes")
         else:
-            print("Skipping sync controller initialization as CalendarSyncController module is not available")
+            print(
+                "Skipping sync controller initialization as CalendarSyncController module is not available")
     else:
         print("Skipping sync storage initialization as SyncStorageManager module is not available")
+
 
 @app.on_event("shutdown")
 async def shutdown_event():
     # Cleanup resources
     global calendar_mcp_server, sync_storage, sync_task
-    
+
     # Stop MCP server if it was initialized
     if calendar_mcp_server:
         try:
@@ -288,7 +296,7 @@ async def shutdown_event():
             print("Calendar MCP server stopped")
         except Exception as e:
             print(f"Error stopping MCP server: {e}")
-    
+
     # Cancel periodic sync task
     if sync_task:
         try:
@@ -299,7 +307,7 @@ async def shutdown_event():
                 print("Periodic sync task cancelled")
         except Exception as e:
             print(f"Error cancelling sync task: {e}")
-    
+
     # Close sync storage
     if sync_storage:
         try:
@@ -309,6 +317,8 @@ async def shutdown_event():
             print(f"Error closing sync storage: {e}")
 
 # Route for health check
+
+
 @app.get("/health")
 async def health_check():
     return {"status": "ok"}

@@ -1,17 +1,13 @@
 # Core dependencies
 python-dotenv==1.0.0
 uvicorn==0.23.2
-fastapi==0.104.1
-pydantic==2.5.2
-pydantic-settings==2.1.0
-httpx==0.25.0
+fastapi==0.115.12
+pydantic
+pydantic-settings
+httpx==0.27.0
 python-jose==3.3.0
 pytest==7.4.3
 tenacity==8.2.3
-
-# TensorFlow
-tensorflow==2.13.0
-tensorflow-intel==2.15.0
 
 # MCP integration dependencies
 openai-agents==0.0.15
@@ -36,7 +32,7 @@ msal-extensions==1.0.0
 redis==5.0.1
 
 # Additional utilities
-python-multipart==0.0.6
+python-multipart==0.0.9
 passlib==1.7.4
 bcrypt==4.0.1
 python-dateutil==2.8.2

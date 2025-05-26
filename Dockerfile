@@ -1,4 +1,4 @@
-FROM python:3.11-slim-bullseye
+FROM python:3.11-bullseye
 
 # Set environment variables
 ENV PYTHONDONTWRITEBYTECODE=1 \
@@ -28,9 +28,10 @@ RUN useradd -m appuser && \
 
 # Copy requirements first to leverage Docker cache
 COPY --chown=appuser:appuser requirements.txt .
+COPY --chown=appuser:appuser constraints.txt .
 
 # Install Python dependencies
-RUN pip install --no-cache-dir -r requirements.txt
+RUN pip install --no-cache-dir -r requirements.txt -c constraints.txt
 
 # Copy application code
 COPY --chown=appuser:appuser . .
