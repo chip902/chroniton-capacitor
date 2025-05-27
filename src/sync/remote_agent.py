@@ -6,14 +6,13 @@ to synchronize calendar data with the central calendar service.
 """
 
 import os
-import sys
 import json
 import asyncio
 import logging
 import argparse
 import aiohttp
 import uuid
-from datetime import datetime, timedelta
+from datetime import datetime
 from typing import List, Dict, Any, Optional
 import platform
 import socket
@@ -145,7 +144,7 @@ class RemoteCalendarAgent:
             }
 
             # Register with central service
-            url = f"{self.central_api_url}/sync/agents"
+            url = f"{self.central_api_url}/api/sync/agents"
             async with self.http_session.post(url, json=agent_data) as response:
                 if response.status == 200:
                     result = await response.json()
@@ -188,16 +187,16 @@ class RemoteCalendarAgent:
                     heartbeat_data["events"] = events
 
             # Send heartbeat to central service
-            url = f"{self.central_api_url}/sync/agents/{self.agent_id}/heartbeat"
+            url = f"{self.central_api_url}/api/sync/agents/{self.agent_id}/heartbeat"
             async with self.http_session.post(url, json=heartbeat_data) as response:
                 if response.status == 200:
                     logger.info("Heartbeat sent successfully")
                     result = await response.json()
-                    
+
                     # Check for pending updates from central service
                     if result and "pending_updates" in result:
                         await self.process_pending_updates(result["pending_updates"])
-                    
+
                     return result
                 else:
                     error_text = await response.text()
@@ -457,13 +456,14 @@ class RemoteCalendarAgent:
         if not updates:
             return
 
-        logger.info(f"Processing {len(updates)} pending updates from central service")
+        logger.info(
+            f"Processing {len(updates)} pending updates from central service")
 
         for update in updates:
             try:
                 update_type = update.get("type")
                 update_data = update.get("data", {})
-                
+
                 if update_type == "calendar_metadata":
                     await self.apply_calendar_metadata_update(update_data)
                 elif update_type == "sync_config":
@@ -476,12 +476,13 @@ class RemoteCalendarAgent:
                     await self.apply_calendar_delete(update_data)
                 else:
                     logger.warning(f"Unknown update type: {update_type}")
-                    
+
                 # Mark update as processed
                 await self.mark_update_processed(update.get("id"))
-                
+
             except Exception as e:
-                logger.error(f"Error processing update {update.get('id')}: {e}")
+                logger.error(
+                    f"Error processing update {update.get('id')}: {e}")
 
     async def apply_calendar_metadata_update(self, update_data: Dict[str, Any]):
         """Apply calendar metadata changes to local calendars"""
@@ -489,15 +490,16 @@ class RemoteCalendarAgent:
             calendar_id = update_data.get("calendar_id")
             provider = update_data.get("provider")
             metadata_changes = update_data.get("changes", {})
-            
-            logger.info(f"Applying metadata update to calendar {calendar_id} on {provider}")
-            
+
+            logger.info(
+                f"Applying metadata update to calendar {calendar_id} on {provider}")
+
             # Find the source configuration
             source = self.find_source_by_calendar_id(calendar_id, provider)
             if not source:
                 logger.warning(f"Source not found for calendar {calendar_id}")
                 return
-                
+
             # Apply changes based on provider
             if provider == "google":
                 await self.update_google_calendar_metadata(source, calendar_id, metadata_changes)
@@ -508,8 +510,9 @@ class RemoteCalendarAgent:
             elif provider == "outlook":
                 await self.update_outlook_calendar_metadata(source, calendar_id, metadata_changes)
             else:
-                logger.warning(f"Unsupported provider for metadata update: {provider}")
-                
+                logger.warning(
+                    f"Unsupported provider for metadata update: {provider}")
+
         except Exception as e:
             logger.error(f"Error applying calendar metadata update: {e}")
 
@@ -517,19 +520,20 @@ class RemoteCalendarAgent:
         """Apply sync configuration changes"""
         try:
             config_changes = update_data.get("changes", {})
-            
+
             logger.info("Applying sync configuration update")
-            
+
             # Update local configuration
             for key, value in config_changes.items():
                 if key in self.config:
                     old_value = self.config[key]
                     self.config[key] = value
-                    logger.info(f"Updated config {key}: {old_value} -> {value}")
-                    
+                    logger.info(
+                        f"Updated config {key}: {old_value} -> {value}")
+
             # Save updated configuration
             await self.save_config()
-            
+
         except Exception as e:
             logger.error(f"Error applying sync config update: {e}")
 
@@ -537,13 +541,15 @@ class RemoteCalendarAgent:
         """Apply event changes to local calendars"""
         try:
             event_data = update_data.get("event", {})
-            action = update_data.get("action", "update")  # create, update, delete
-            
-            logger.info(f"Applying event {action} for event {event_data.get('id')}")
-            
+            # create, update, delete
+            action = update_data.get("action", "update")
+
+            logger.info(
+                f"Applying event {action} for event {event_data.get('id')}")
+
             # Implementation would depend on the specific calendar provider
             # This is a placeholder for the actual implementation
-            
+
         except Exception as e:
             logger.error(f"Error applying event update: {e}")
 
@@ -552,12 +558,13 @@ class RemoteCalendarAgent:
         try:
             calendar_data = update_data.get("calendar", {})
             provider = update_data.get("provider")
-            
-            logger.info(f"Creating new calendar on {provider}: {calendar_data.get('name')}")
-            
+
+            logger.info(
+                f"Creating new calendar on {provider}: {calendar_data.get('name')}")
+
             # Implementation would depend on the specific calendar provider
             # This is a placeholder for the actual implementation
-            
+
         except Exception as e:
             logger.error(f"Error creating calendar: {e}")
 
@@ -566,27 +573,28 @@ class RemoteCalendarAgent:
         try:
             calendar_id = update_data.get("calendar_id")
             provider = update_data.get("provider")
-            
+
             logger.info(f"Deleting calendar {calendar_id} from {provider}")
-            
+
             # Implementation would depend on the specific calendar provider
             # This is a placeholder for the actual implementation
-            
+
         except Exception as e:
             logger.error(f"Error deleting calendar: {e}")
 
     def find_source_by_calendar_id(self, calendar_id: str, provider: str) -> Optional[Dict[str, Any]]:
         """Find source configuration by calendar ID and provider"""
         for source in self.config.get("calendar_sources", []):
-            if (source.get("calendar_id") == calendar_id and 
-                source.get("type") == provider):
+            if (source.get("calendar_id") == calendar_id and
+                    source.get("type") == provider):
                 return source
         return None
 
     async def update_google_calendar_metadata(self, source: Dict[str, Any], calendar_id: str, changes: Dict[str, Any]):
         """Update Google Calendar metadata"""
         try:
-            logger.info(f"Would update Google Calendar {calendar_id} with changes: {changes}")
+            logger.info(
+                f"Would update Google Calendar {calendar_id} with changes: {changes}")
             # Placeholder for Google Calendar API implementation
             # from googleapiclient.discovery import build
             # service = build('calendar', 'v3', credentials=credentials)
@@ -596,14 +604,15 @@ class RemoteCalendarAgent:
             # if 'color' in changes:
             #     calendar_patch['backgroundColor'] = changes['color']
             # service.calendars().patch(calendarId=calendar_id, body=calendar_patch).execute()
-            
+
         except Exception as e:
             logger.error(f"Error updating Google Calendar metadata: {e}")
 
     async def update_microsoft_calendar_metadata(self, source: Dict[str, Any], calendar_id: str, changes: Dict[str, Any]):
         """Update Microsoft Calendar metadata"""
         try:
-            logger.info(f"Would update Microsoft Calendar {calendar_id} with changes: {changes}")
+            logger.info(
+                f"Would update Microsoft Calendar {calendar_id} with changes: {changes}")
             # Placeholder for Microsoft Graph API implementation
             # from msgraph.core import GraphClient
             # graph_client = GraphClient(credentials=credentials)
@@ -613,14 +622,15 @@ class RemoteCalendarAgent:
             # if 'color' in changes:
             #     patch_data['color'] = changes['color']
             # await graph_client.patch(f'/me/calendars/{calendar_id}', data=patch_data)
-            
+
         except Exception as e:
             logger.error(f"Error updating Microsoft Calendar metadata: {e}")
 
     async def update_exchange_calendar_metadata(self, source: Dict[str, Any], calendar_id: str, changes: Dict[str, Any]):
         """Update Exchange Calendar metadata"""
         try:
-            logger.info(f"Would update Exchange Calendar {calendar_id} with changes: {changes}")
+            logger.info(
+                f"Would update Exchange Calendar {calendar_id} with changes: {changes}")
             # Placeholder for Exchange Web Services implementation
             # from exchangelib import Account, Calendar
             # account = Account(...)
@@ -628,15 +638,16 @@ class RemoteCalendarAgent:
             # if 'name' in changes:
             #     calendar.display_name = changes['name']
             # calendar.save()
-            
+
         except Exception as e:
             logger.error(f"Error updating Exchange Calendar metadata: {e}")
 
     async def update_outlook_calendar_metadata(self, source: Dict[str, Any], calendar_id: str, changes: Dict[str, Any]):
         """Update Outlook Calendar metadata using COM interface"""
         try:
-            logger.info(f"Would update Outlook Calendar {calendar_id} with changes: {changes}")
-            
+            logger.info(
+                f"Would update Outlook Calendar {calendar_id} with changes: {changes}")
+
             # Placeholder for Outlook COM implementation
             # import win32com.client
             # outlook = win32com.client.Dispatch("Outlook.Application")
@@ -644,7 +655,7 @@ class RemoteCalendarAgent:
             # calendar = namespace.GetDefaultFolder(9)  # olFolderCalendar
             # if 'name' in changes:
             #     calendar.Name = changes['name']
-            
+
         except Exception as e:
             logger.error(f"Error updating Outlook Calendar metadata: {e}")
 
@@ -652,15 +663,16 @@ class RemoteCalendarAgent:
         """Mark an update as processed with the central service"""
         if not self.central_api_url or not self.agent_id or not update_id:
             return
-            
+
         try:
-            url = f"{self.central_api_url}/sync/agents/{self.agent_id}/updates/{update_id}/processed"
+            url = f"{self.central_api_url}/api/sync/agents/{self.agent_id}/updates/{update_id}/processed"
             async with self.http_session.post(url) as response:
                 if response.status == 200:
                     logger.debug(f"Marked update {update_id} as processed")
                 else:
-                    logger.warning(f"Failed to mark update {update_id} as processed: {response.status}")
-                    
+                    logger.warning(
+                        f"Failed to mark update {update_id} as processed: {response.status}")
+
         except Exception as e:
             logger.error(f"Error marking update as processed: {e}")
 
@@ -668,17 +680,18 @@ class RemoteCalendarAgent:
         """Manually check for pending updates from central service"""
         if not self.central_api_url or not self.agent_id:
             return []
-            
+
         try:
-            url = f"{self.central_api_url}/sync/agents/{self.agent_id}/pending-updates"
+            url = f"{self.central_api_url}/api/sync/agents/{self.agent_id}/pending-updates"
             async with self.http_session.get(url) as response:
                 if response.status == 200:
                     result = await response.json()
                     return result.get("updates", [])
                 else:
-                    logger.warning(f"Failed to get pending updates: {response.status}")
+                    logger.warning(
+                        f"Failed to get pending updates: {response.status}")
                     return []
-                    
+
         except Exception as e:
             logger.error(f"Error getting pending updates: {e}")
             return []

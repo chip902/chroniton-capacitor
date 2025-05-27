@@ -63,9 +63,10 @@ def get_outlook_mac_database_path():
                         try:
                             conn = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
                             cursor = conn.cursor()
-                            # Check if it has the expected tables
-                            cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='ZFOLDER';")
-                            if cursor.fetchone():
+                            # Check if it has the expected tables (trying both old and new schema)
+                            cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND (name='ZFOLDER' OR name='Folders' OR name='CalendarEvents');")
+                            tables = [row[0] for row in cursor.fetchall()]
+                            if tables:
                                 conn.close()
                                 return db_path
                             conn.close()
@@ -90,8 +91,9 @@ def get_outlook_mac_database_path():
                     try:
                         conn = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
                         cursor = conn.cursor()
-                        cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='ZFOLDER';")
-                        if cursor.fetchone():
+                        cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND (name='ZFOLDER' OR name='Folders' OR name='CalendarEvents');")
+                        tables = [row[0] for row in cursor.fetchall()]
+                        if tables:
                             conn.close()
                             return db_path
                         conn.close()
@@ -121,57 +123,100 @@ def get_outlook_mac_calendars():
         conn = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
         cursor = conn.cursor()
         
-        # Get calendar folders
+        # Get all calendar folders
         cursor.execute("""
-            SELECT Z_PK, ZNAME, ZIDENTIFIER, ZCOLOR, ZISENABLED, ZACCOUNT
-            FROM ZFOLDER
-            WHERE ZFOLDERTYPE = 8  -- 8 is the folder type for calendars
-            ORDER BY ZNAME
+            SELECT 
+                f.Record_RecordID, 
+                f.Folder_Name, 
+                f.Record_AccountUID,
+                '0000FF' as Color,  -- Default color
+                1 as IsEnabled,      -- Default to enabled
+                f.Record_AccountUID as AccountID
+            FROM 
+                Folders f
+            WHERE 
+                f.Folder_FolderClass = 2  -- Calendar folder class
+                AND f.Folder_Name IS NOT NULL
+                AND f.Folder_Name != 'Placeholder_Calendar_Placeholder'  -- Skip placeholder
+            ORDER BY 
+                f.Folder_Name
         """)
         
         calendars = []
-        for row in cursor.fetchall():
-            cal_id, name, identifier, color, is_enabled, account_id = row
+        rows = cursor.fetchall()
+        print(f"Found {len(rows)} calendar folders")
+        
+        for row in rows:
+            try:
+                cal_id, name, identifier, color, is_enabled, account_id = row
+                print(f"Processing calendar: {name} (ID: {cal_id}, Account ID: {account_id})")
             
-            # Get account information
-            cursor.execute("""
-                SELECT ZACCOUNTNAME, ZACCOUNTTYPE
-                FROM ZACCOUNT
-                WHERE Z_PK = ?
-            """, (account_id,))
-            
-            account_row = cursor.fetchone()
-            account_name = account_row[0] if account_row else "Unknown Account"
-            account_type = account_row[1] if account_row and len(account_row) > 1 else "Unknown"
-            
-            # Get event count
-            cursor.execute("""
-                SELECT COUNT(*)
-                FROM ZCALENDARITEM
-                WHERE ZFOLDER = ?
-            """, (cal_id,))
-            
-            event_count = cursor.fetchone()[0]
-            
-            calendar = {
-                'name': name,
-                'id': identifier,
-                'account_name': account_name,
-                'account_type': account_type,
-                'event_count': event_count,
-                'color': f"#{color:06x}" if color else None,
-                'enabled': bool(is_enabled)
-            }
-            calendars.append(calendar)
+                # Get account information
+                cursor.execute("""
+                    SELECT Account_Name, Account_EmailAddress, Account_ServerType
+                    FROM AccountsMail
+                    WHERE Record_RecordID = ?
+                """, (account_id,))
+                
+                account_row = cursor.fetchone()
+                if account_row:
+                    account_name = account_row[0] or account_row[1] or "Unknown Account"
+                    # Map server type to a human-readable string
+                    server_type = account_row[2] if account_row[2] is not None else 0
+                    server_types = {
+                        0: "Unknown",
+                        1: "Exchange",
+                        2: "IMAP",
+                        3: "POP",
+                        4: "iCloud",
+                        5: "Gmail",
+                        6: "Yahoo",
+                        7: "Outlook.com",
+                        8: "AOL",
+                        9: "Other"
+                    }
+                    account_type = server_types.get(server_type, f"Unknown ({server_type})")
+                else:
+                    account_name = "Unknown Account"
+                    account_type = "Unknown"
+                
+                # Get event count
+                cursor.execute("""
+                    SELECT COUNT(*)
+                    FROM CalendarEvents
+                    WHERE Record_FolderID = ?
+                """, (cal_id,))
+                
+                event_count = cursor.fetchone()[0] if cursor else 0
+                
+                calendar = {
+                    'name': name,
+                    'id': cal_id,  # Using Record_RecordID as the identifier
+                    'account_name': account_name,
+                    'account_type': account_type,
+                    'event_count': event_count,
+                    'color': f"#{color}" if color and isinstance(color, str) and color.isdigit() else color,
+                    'enabled': bool(is_enabled)
+                }
+                print(f"Added calendar: {calendar}")
+                calendars.append(calendar)
+            except Exception as e:
+                print(f"Error processing row {row}: {e}")
+                import traceback
+                traceback.print_exc()
         
         conn.close()
         return calendars
         
     except sqlite3.Error as e:
         print(f"Database error: {e}")
+        import traceback
+        traceback.print_exc()
         return []
     except Exception as e:
         print(f"Error getting Outlook calendars: {e}")
+        import traceback
+        traceback.print_exc()
         return []
 
 def main():

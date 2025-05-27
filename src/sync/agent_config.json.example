@@ -1,0 +1,9 @@
+{
+	"agent_id": "39873646-d62d-456c-bfd3-a204b7716741",
+	"agent_name": "Agent-My-Computer.local",
+	"environment": "My-Computer.local",
+	"central_api_url": "http://foo.com:8008",
+	"sync_interval_minutes": 5,
+	"sync_tokens": {},
+	"calendar_sources": []
+}

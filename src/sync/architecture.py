@@ -43,11 +43,13 @@ from typing import List, Dict, Any, Optional, Union
 from pydantic import BaseModel, Field
 from datetime import datetime
 
+
 class SyncDirection(str, Enum):
     """Direction of calendar synchronization"""
     READ_ONLY = "read_only"  # Only read from source calendar
     WRITE_ONLY = "write_only"  # Only write to source calendar
     BIDIRECTIONAL = "bidirectional"  # Read and write to source calendar
+
 
 class SyncFrequency(str, Enum):
     """Frequency of calendar synchronization"""
@@ -56,6 +58,7 @@ class SyncFrequency(str, Enum):
     DAILY = "daily"
     MANUAL = "manual"
 
+
 class SyncMethod(str, Enum):
     """Method used for calendar synchronization"""
     API = "api"  # Direct API integration
@@ -63,12 +66,14 @@ class SyncMethod(str, Enum):
     FILE = "file"  # File-based sync (import/export)
     EMAIL = "email"  # Email-based sync for highly restricted environments
 
+
 class ConflictResolution(str, Enum):
     """Strategy for resolving conflicts during synchronization"""
     SOURCE_WINS = "source_wins"  # Source calendar takes precedence
     DESTINATION_WINS = "destination_wins"  # Destination calendar takes precedence
     LATEST_WINS = "latest_wins"  # Most recently updated event wins
     MANUAL = "manual"  # Require manual resolution
+
 
 class SyncSource(BaseModel):
     """Configuration for a calendar sync source"""
@@ -80,10 +85,13 @@ class SyncSource(BaseModel):
     sync_direction: SyncDirection = SyncDirection.READ_ONLY
     sync_frequency: SyncFrequency = SyncFrequency.HOURLY
     sync_method: SyncMethod = SyncMethod.API
-    calendars: List[str] = Field(default_factory=list)  # List of calendar IDs to sync
+    # List of calendar IDs to sync
+    calendars: List[str] = Field(default_factory=list)
     last_sync: Optional[datetime] = None
-    sync_tokens: Dict[str, str] = Field(default_factory=dict)  # Tokens for incremental sync
+    sync_tokens: Dict[str, str] = Field(
+        default_factory=dict)  # Tokens for incremental sync
     enabled: bool = True
+
 
 class SyncDestination(BaseModel):
     """Configuration for a calendar sync destination"""
@@ -94,10 +102,14 @@ class SyncDestination(BaseModel):
     credentials: Optional[Dict[str, Any]] = None
     calendar_id: str  # Primary destination calendar ID
     conflict_resolution: ConflictResolution = ConflictResolution.LATEST_WINS
-    categories: Dict[str, str] = Field(default_factory=dict)  # Mapping source -> category
+    categories: Dict[str, str] = Field(
+        default_factory=dict)  # Mapping source -> category
     # New fields for multiple calendars and color management
-    source_calendars: Dict[str, str] = Field(default_factory=dict)  # Mapping source_id -> calendar_id
-    color_management: str = "separate_calendar"  # Options: "category", "property", "separate_calendar"
+    source_calendars: Dict[str, str] = Field(
+        default_factory=dict)  # Mapping source_id -> calendar_id
+    # Options: "category", "property", "separate_calendar"
+    color_management: str = "separate_calendar"
+
 
 class SyncAgentConfig(BaseModel):
     """Configuration for a remote calendar sync agent"""
@@ -115,9 +127,10 @@ class SyncAgentConfig(BaseModel):
     last_check_in: Optional[datetime] = None
     enabled: bool = True
 
+
 class SyncConfiguration(BaseModel):
     """Master configuration for calendar synchronization"""
-    sources: List[SyncSource] = Field(default_factory=list)
-    destination: SyncDestination
-    agents: List[SyncAgentConfig] = Field(default_factory=list)
-    global_settings: Dict[str, Any] = Field(default_factory=dict)
+    sources: List[SyncSource] = []
+    agents: List[SyncAgentConfig] = []
+    destination: Optional[SyncDestination] = None
+    global_settings: Dict[str, Any] = {}
