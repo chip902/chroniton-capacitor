@@ -1,290 +1,230 @@
+#!/usr/bin/env python3
 """
 Outlook for Mac Calendar Lister
 
 This script lists all available calendars from Outlook for Mac
-to help with calendar sync configuration.
+and generates a configuration for the calendar sync agent.
 """
 
-import subprocess
-import json
-from datetime import datetime
 import os
 import sqlite3
-from pprint import pprint
+import json
+from datetime import datetime
 
-def find_sqlite_files(directory, max_depth=3, current_depth=0):
-    """Recursively find all SQLite files in a directory"""
-    if current_depth > max_depth:
-        return []
-        
-    sqlite_files = []
-    try:
-        with os.scandir(directory) as it:
-            for entry in it:
-                try:
-                    if entry.is_file() and entry.name.endswith(('.sqlite', '.sqlitedb', '.db')):
-                        sqlite_files.append(entry.path)
-                    elif entry.is_dir() and not entry.is_symlink():
-                        sqlite_files.extend(find_sqlite_files(entry.path, max_depth, current_depth + 1))
-                except (PermissionError, OSError):
-                    continue
-    except (PermissionError, OSError):
-        pass
-        
-    return sqlite_files
 
 def get_outlook_mac_database_path():
     """Find the path to the Outlook for Mac database"""
-    # Common paths where Outlook for Mac stores its database
-    possible_paths = [
-        os.path.expanduser("~/Library/Group Containers/UBF8T346G9.Office/Outlook/Outlook 15 Profiles/Main Profile/Data/"),
-        os.path.expanduser("~/Library/Group Containers/UBF8T346G9.Office/Outlook/"),
-        os.path.expanduser("~/Library/Group Containers/UBF8T346G9.Office/"),
-        os.path.expanduser("~/Library/Containers/com.microsoft.Outlook/Data/Library/Application Support/Microsoft/Outlook/"),
-        os.path.expanduser("~/Library/Application Support/Microsoft/Office/Outlook/"),
-        os.path.expanduser("~/Library/Containers/com.microsoft.Outlook/Data/Library/Caches/"),
-    ]
-    
-    print("\nSearching for Outlook database in common locations...")
-    
-    # Check common paths first
-    for path in possible_paths:
-        if os.path.exists(path):
-            print(f"\nChecking: {path}")
-            for root, dirs, files in os.walk(path, topdown=True):
-                # Skip some uninteresting directories
-                dirs[:] = [d for d in dirs if not d.startswith('.') and 'Cache' not in d]
-                
-                for file in files:
-                    if file.endswith(('.sqlite', '.sqlitedb', '.db')) and 'calendar' in file.lower():
-                        db_path = os.path.join(root, file)
-                        print(f"  Found potential database: {db_path}")
-                        # Try to open the database to verify
-                        try:
-                            conn = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
-                            cursor = conn.cursor()
-                            # Check if it has the expected tables (trying both old and new schema)
-                            cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND (name='ZFOLDER' OR name='Folders' OR name='CalendarEvents');")
-                            tables = [row[0] for row in cursor.fetchall()]
-                            if tables:
-                                conn.close()
-                                return db_path
-                            conn.close()
-                        except sqlite3.Error:
-                            continue
-    
-    # If we get here, do a broader search
-    print("\nPerforming broader search for Outlook database files...")
-    search_paths = [
-        os.path.expanduser("~/Library/Group Containers/"),
-        os.path.expanduser("~/Library/Containers/"),
-        os.path.expanduser("~/Library/Application Support/")
-    ]
-    
-    for path in search_paths:
-        if os.path.exists(path):
-            print(f"\nSearching in: {path}")
-            sqlite_files = find_sqlite_files(path, max_depth=5)
-            for db_path in sqlite_files:
-                if 'outlook' in db_path.lower() or 'office' in db_path.lower() or 'microsoft' in db_path.lower():
-                    print(f"  Found potential database: {db_path}")
-                    try:
-                        conn = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
-                        cursor = conn.cursor()
-                        cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND (name='ZFOLDER' OR name='Folders' OR name='CalendarEvents');")
-                        tables = [row[0] for row in cursor.fetchall()]
-                        if tables:
-                            conn.close()
-                            return db_path
-                        conn.close()
-                    except sqlite3.Error:
-                        continue
-    
-    print("\nCould not find Outlook database. Here are some troubleshooting steps:")
-    print("1. Make sure Outlook for Mac is installed and has been run at least once")
-    print("2. Check if you have any Microsoft 365 or Exchange accounts added in Outlook")
-    print("3. The database might be in a different location if you're using an older version of Outlook")
-    print("4. Try running 'mdfind -name '*.sqlite' | grep -i outlook' in Terminal to search for database files")
-    
-    return None
+    # Direct path to the Outlook database
+    db_path = os.path.expanduser(
+        "~/Library/Group Containers/UBF8T346G9.Office/Outlook/Outlook 15 Profiles/Main Profile/Data/Outlook.sqlite"
+    )
+
+    print(f"\nChecking for Outlook database at: {db_path}")
+
+    if os.path.exists(db_path):
+        print("  Found Outlook database")
+        # Verify we can access the database
+        try:
+            conn = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
+            cursor = conn.cursor()
+            cursor.execute(
+                "SELECT name FROM sqlite_master WHERE type='table';")
+            tables = [row[0] for row in cursor.fetchall()]
+            conn.close()
+
+            # Check for required tables
+            required_tables = {'Folders', 'CalendarEvents', 'AccountsMail'}
+            if required_tables.issubset(tables):
+                print("  Database contains required tables")
+                return db_path
+            else:
+                print(
+                    f"  Warning: Missing some required tables. Found: {tables}")
+                return None
+
+        except sqlite3.Error as e:
+            print(f"  Error accessing database: {e}")
+            return None
+    else:
+        print("  Error: Database file not found at the expected location")
+        return None
+
 
 def get_outlook_mac_calendars():
     """Get all available calendars from Outlook for Mac"""
+    db_path = get_outlook_mac_database_path()
+    if not db_path:
+        print("\nCould not find Outlook database. Make sure Outlook is installed and has been run at least once.")
+        return []
+
+    print(f"\nFound Outlook database at: {db_path}")
+
     try:
-        # First try to find the database
-        db_path = get_outlook_mac_database_path()
-        if not db_path:
-            print("Could not find Outlook for Mac database. Is Outlook installed?")
-            return []
-            
-        print(f"Found Outlook database at: {db_path}")
-        
         # Connect to the database
         conn = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
+        conn.row_factory = sqlite3.Row  # Enable column access by name
         cursor = conn.cursor()
-        
+
+        print("\nFetching calendar folders...")
         # Get all calendar folders
         cursor.execute("""
-            SELECT 
-                f.Record_RecordID, 
-                f.Folder_Name, 
-                f.Record_AccountUID,
-                '0000FF' as Color,  -- Default color
-                1 as IsEnabled,      -- Default to enabled
-                f.Record_AccountUID as AccountID
-            FROM 
-                Folders f
-            WHERE 
-                f.Folder_FolderClass = 2  -- Calendar folder class
-                AND f.Folder_Name IS NOT NULL
-                AND f.Folder_Name != 'Placeholder_Calendar_Placeholder'  -- Skip placeholder
-            ORDER BY 
-                f.Folder_Name
+            SELECT Record_RecordID as id, 
+                   Folder_Name as name,
+                   Record_AccountUID as account_uid,
+                   Folder_FolderType as folder_type
+            FROM Folders
+            WHERE Folder_FolderType = 'IPF.Appointment' OR 
+                  Folder_FolderType = 'IPF.Calendar' OR
+                  Folder_Name LIKE '%Calendar%'
+            ORDER BY Folder_Name
         """)
-        
+
         calendars = []
-        rows = cursor.fetchall()
-        print(f"Found {len(rows)} calendar folders")
-        
-        for row in rows:
-            try:
-                cal_id, name, identifier, color, is_enabled, account_id = row
-                print(f"Processing calendar: {name} (ID: {cal_id}, Account ID: {account_id})")
-            
-                # Get account information
+        for folder in cursor.fetchall():
+            folder_id = folder['id']
+            folder_name = folder['name']
+            account_uid = folder['account_uid']
+
+            # Get account info
+            cursor.execute("""
+                SELECT Account_EmailAddress as email, 
+                       Account_Name as name
+                FROM AccountsMail
+                WHERE Record_RecordID = ?
+            """, (account_uid,))
+
+            account = cursor.fetchone()
+            if account:
+                account_email = account['email'] or ""
+                account_name = account['name'] or "Unknown"
+            else:
+                # Try to get from Exchange accounts
                 cursor.execute("""
-                    SELECT Account_Name, Account_EmailAddress, Account_ServerType
-                    FROM AccountsMail
+                    SELECT Account_EmailAddress as email, 
+                           Account_Name as name
+                    FROM AccountsExchange
                     WHERE Record_RecordID = ?
-                """, (account_id,))
-                
-                account_row = cursor.fetchone()
-                if account_row:
-                    account_name = account_row[0] or account_row[1] or "Unknown Account"
-                    # Map server type to a human-readable string
-                    server_type = account_row[2] if account_row[2] is not None else 0
-                    server_types = {
-                        0: "Unknown",
-                        1: "Exchange",
-                        2: "IMAP",
-                        3: "POP",
-                        4: "iCloud",
-                        5: "Gmail",
-                        6: "Yahoo",
-                        7: "Outlook.com",
-                        8: "AOL",
-                        9: "Other"
-                    }
-                    account_type = server_types.get(server_type, f"Unknown ({server_type})")
+                """, (account_uid,))
+                exchange_account = cursor.fetchone()
+                if exchange_account:
+                    account_email = exchange_account['email'] or ""
+                    account_name = exchange_account['name'] or "Unknown"
                 else:
-                    account_name = "Unknown Account"
-                    account_type = "Unknown"
-                
-                # Get event count
-                cursor.execute("""
-                    SELECT COUNT(*)
-                    FROM CalendarEvents
-                    WHERE Record_FolderID = ?
-                """, (cal_id,))
-                
-                event_count = cursor.fetchone()[0] if cursor else 0
-                
-                calendar = {
-                    'name': name,
-                    'id': cal_id,  # Using Record_RecordID as the identifier
-                    'account_name': account_name,
-                    'account_type': account_type,
-                    'event_count': event_count,
-                    'color': f"#{color}" if color and isinstance(color, str) and color.isdigit() else color,
-                    'enabled': bool(is_enabled)
-                }
-                print(f"Added calendar: {calendar}")
-                calendars.append(calendar)
-            except Exception as e:
-                print(f"Error processing row {row}: {e}")
-                import traceback
-                traceback.print_exc()
-        
+                    account_email = ""
+                    account_name = "Unknown"
+
+            # Count events in this calendar
+            cursor.execute("""
+                SELECT COUNT(*) as count
+                FROM CalendarEvents
+                WHERE Record_FolderID = ?
+            """, (folder_id,))
+            event_count = cursor.fetchone()['count']
+
+            # Get calendar color if available
+            cursor.execute("""
+                SELECT Category_BackgroundColor
+                FROM Categories
+                WHERE Record_FolderID = ?
+                LIMIT 1
+            """, (folder_id,))
+
+            color_row = cursor.fetchone()
+            color = "#1a73e8"  # Default blue color
+            if color_row and color_row[0]:
+                try:
+                    # Convert from BGR to RGB hex
+                    bgr = int(color_row[0])
+                    r = bgr & 0xff
+                    g = (bgr >> 8) & 0xff
+                    b = (bgr >> 16) & 0xff
+                    color = f"#{r:02x}{g:02x}{b:02x}"
+                except (ValueError, TypeError):
+                    pass
+
+            calendar_data = {
+                'id': str(folder_id),
+                'name': folder_name,
+                'display_name': folder_name,
+                'account_name': account_name,
+                'account_email': account_email,
+                'account_type': 'Email' if account_email else 'Local Calendar',
+                'event_count': event_count,
+                'color': color,
+                'enabled': True,
+                'path': "",
+                'last_sync': ""
+            }
+
+            print(
+                f"  Found calendar: {calendar_data['name']} ({event_count} events)")
+            calendars.append(calendar_data)
+
         conn.close()
         return calendars
-        
+
     except sqlite3.Error as e:
-        print(f"Database error: {e}")
+        print(f"Error accessing Outlook database: {e}")
         import traceback
         traceback.print_exc()
         return []
-    except Exception as e:
-        print(f"Error getting Outlook calendars: {e}")
-        import traceback
-        traceback.print_exc()
-        return []
+
 
 def main():
     """Main function to list calendars and generate config"""
     print("\n=== Outlook for Mac Calendar Configuration Helper ===\n")
-    print("Searching for calendars in Outlook for Mac...\n")
-    
-    # Make sure Outlook is running
-    try:
-        subprocess.run(['osascript', '-e', 'tell application "Microsoft Outlook" to get name'], 
-                      capture_output=True, check=True)
-    except subprocess.CalledProcessError:
-        print("Microsoft Outlook is not running. Starting Outlook...")
-        try:
-            subprocess.run(['open', '-a', 'Microsoft Outlook'])
-            print("Please wait while Outlook starts, then run this script again.")
-            return
-        except Exception as e:
-            print(f"Failed to start Outlook: {e}")
-            return
-    
+    print("Searching for Outlook calendars...\n")
+
     calendars = get_outlook_mac_calendars()
-    
+
     if not calendars:
-        print("No calendars found. Make sure you have at least one calendar in Outlook.")
+        print("No calendars found. Make sure Outlook for Mac is installed and configured.")
         return
-    
-    print(f"Found {len(calendars)} calendar(s):\n")
-    
+
+    print(f"\nFound {len(calendars)} calendar(s):\n")
+
     # Display calendar information
     for idx, cal in enumerate(calendars, 1):
         print(f"{idx}. {cal['name']}")
-        print(f"   ID: {cal['id']}")
-        print(f"   Account: {cal['account_name']} ({cal['account_type']})")
+        print(f"   Account: {cal['account_name']}")
+        print(f"   Email: {cal['account_email'] or 'N/A'}")
+        print(f"   Type: {cal['account_type']}")
         print(f"   Events: {cal['event_count']}")
-        if cal['color']:
-            print(f"   Color: {cal['color']}")
-        print()
-    
+        print(f"   Color: {cal['color']}")
+
     # Generate config snippet
     print("\n=== Configuration Snippet ===\n")
-    print("Use the following in your outlook_config.json file:")
+    print("Use the following in your agent_config.json file (calendar_sources section):")
     print('"calendar_sources": [')
-    
+
     for cal in calendars:
         config = {
             'type': 'outlook',
-            'name': f"{cal['account_name']} - {cal['name']}",
-            'calendar_name': cal['name'],
-            'calendar_id': cal['id'],
-            'account': cal['account_name']
+            'name': cal['name'],
+            'display_name': cal['display_name'],
+            'id': cal['id'],
+            'account_name': cal['account_name'],
+            'account_email': cal['account_email'],
+            'account_type': cal['account_type'],
+            'event_count': cal['event_count'],
+            'color': cal['color'],
+            'enabled': cal['enabled'],
+            'path': cal['path']
         }
-        print(f'    {json.dumps(config, indent=4)},')
-    
+        print(f'    {json.dumps(config, indent=4, ensure_ascii=False)},')
+
     print(']')
     print("\n=== End of Configuration ===\n")
-    
+
     # Save full details to file
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     output_file = f"outlook_mac_calendars_{timestamp}.json"
-    with open(output_file, 'w') as f:
-        json.dump(calendars, f, indent=2, default=str)
-    
+    with open(output_file, 'w', encoding='utf-8') as f:
+        json.dump(calendars, f, indent=2, ensure_ascii=False, default=str)
+
     print(f"\nFull calendar details saved to: {os.path.abspath(output_file)}")
     print("Use this file for reference when setting up your sync configuration.")
-    
-    print("\nNote: The calendar IDs are specific to your Outlook installation. "
-          "You'll need to run this on each Mac where you set up the sync.")
+
 
 if __name__ == "__main__":
     main()

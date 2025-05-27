@@ -144,7 +144,7 @@ class RemoteCalendarAgent:
             }
 
             # Register with central service
-            url = f"{self.central_api_url}/api/sync/agents"
+            url = f"{self.central_api_url}/sync/agents"
             async with self.http_session.post(url, json=agent_data) as response:
                 if response.status == 200:
                     result = await response.json()
@@ -187,7 +187,7 @@ class RemoteCalendarAgent:
                     heartbeat_data["events"] = events
 
             # Send heartbeat to central service
-            url = f"{self.central_api_url}/api/sync/agents/{self.agent_id}/heartbeat"
+            url = f"{self.central_api_url}/sync/agents/{self.agent_id}/heartbeat"
             async with self.http_session.post(url, json=heartbeat_data) as response:
                 if response.status == 200:
                     logger.info("Heartbeat sent successfully")
@@ -330,105 +330,306 @@ class RemoteCalendarAgent:
             logger.error(f"Error collecting iCal events: {e}")
             return []
 
-    async def collect_outlook_events(self, source: Dict[str, Any]) -> List[Dict[str, Any]]:
-        """Collect events directly from Outlook using COM interface (Windows only)"""
+    async def _collect_outlook_windows_events(self, source: Dict[str, Any]) -> List[Dict[str, Any]]:
+        """Collect events from Outlook on Windows using COM interface"""
         try:
-            # Import the required libraries
             import win32com.client
+            import pythoncom
             from datetime import datetime, timedelta
 
             logger.info(
-                f"Collecting events from Outlook calendar: {source.get('name')}")
+                f"Collecting events from Outlook calendar (Windows): {source.get('name')}")
 
-            # Define date range
-            start_date = datetime.now() - timedelta(days=30)  # Past 30 days
-            end_date = datetime.now() + timedelta(days=90)    # Next 90 days
-
-            # Connect to Outlook
-            outlook = win32com.client.Dispatch("Outlook.Application")
-            namespace = outlook.GetNamespace("MAPI")
-
-            # Access the calendar folder
-            # Default to main Calendar folder
-            calendar_name = source.get('calendar_name', 'Calendar')
-            folder_index = 9  # 9 = olFolderCalendar
-
-            # Try to get the specified calendar or default to main Calendar
+            # Initialize COM for this thread
+            pythoncom.CoInitialize()
             try:
-                calendar = namespace.GetDefaultFolder(folder_index)
-                # If a specific calendar is requested, try to find it
-                if calendar_name != 'Calendar':
-                    found = False
-                    for folder in calendar.Folders:
-                        if folder.Name == calendar_name:
-                            calendar = folder
-                            found = True
-                            break
-                    if not found:
-                        logger.warning(
-                            f"Calendar '{calendar_name}' not found, using default Calendar")
+                # Connect to Outlook
+                outlook = win32com.client.Dispatch("Outlook.Application")
+                namespace = outlook.GetNamespace("MAPI")
+
+                # Get the calendar folder
+                calendar_name = source.get("calendar_name", "Calendar")
+                calendar = None
+
+                # Try to find the calendar by name
+                # 9 = olFolderCalendar
+                for folder in namespace.GetDefaultFolder(9).Folders:
+                    if folder.Name == calendar_name:
+                        calendar = folder
+                        break
+
+                if not calendar:
+                    logger.warning(
+                        f"Calendar '{calendar_name}' not found. Using default calendar.")
+                    calendar = namespace.GetDefaultFolder(
+                        9)  # Default calendar
+
+                # Get appointments from the last 30 days and next 30 days
+                start_date = (datetime.now() - timedelta(days=30)
+                              ).strftime('%m/%d/%Y')
+                end_date = (datetime.now() + timedelta(days=30)
+                            ).strftime('%m/%d/%Y')
+
+                # Create filter
+                filter_str = f"[Start] >= '{start_date}' AND [End] <= '{end_date}'"
+                appointments = calendar.Items.Restrict(filter_str)
+                events = []
+
+                for appointment in appointments:
+                    try:
+                        # Skip recurring appointments for now
+                        if appointment.IsRecurring:
+                            continue
+
+                        event = {
+                            "id": appointment.EntryID,
+                            "title": appointment.Subject,
+                            "description": appointment.Body,
+                            "start": appointment.Start.isoformat(),
+                            "end": appointment.End.isoformat(),
+                            "location": appointment.Location,
+                            "all_day": appointment.AllDayEvent,
+                            "recurring": False,
+                            "source": "outlook",
+                            "source_id": appointment.EntryID,
+                            "calendar_id": source.get("id", ""),
+                            "calendar_name": calendar_name,
+                            "status": "confirmed" if appointment.MeetingStatus == 0 else "tentative",
+                            "participants": [],
+                            "created_at": appointment.CreationTime.isoformat() if hasattr(appointment, "CreationTime") else None,
+                            "updated_at": appointment.LastModificationTime.isoformat() if hasattr(appointment, "LastModificationTime") else None,
+                        }
+                        # Add attendees if available
+                        if hasattr(appointment, "Recipients"):
+                            for recipient in appointment.Recipients:
+                                participant = {
+                                    "email": recipient.Address if hasattr(recipient, "Address") else None,
+                                    "name": recipient.Name if hasattr(recipient, "Name") else None,
+                                    "response_status": "accepted" if recipient.MeetingResponseStatus == 3 else "tentative"
+                                }
+                                event["participants"].append(participant)
+
+                        events.append(event)
+                    except Exception as e:
+                        logger.error(f"Error processing appointment: {e}")
+                        continue
+
+                logger.info(
+                    f"Collected {len(events)} events from Outlook calendar '{calendar_name}'")
+                return events
+
             except Exception as e:
-                logger.error(f"Error accessing Outlook calendar: {e}")
+                logger.error(f"Error accessing Outlook: {e}")
                 return []
-
-            # Format date restriction for Outlook
-            restriction = f"[Start] >= '{start_date.strftime('%m/%d/%Y')}' AND [End] <= '{end_date.strftime('%m/%d/%Y')}'"
-            appointments = calendar.Items.Restrict(restriction)
-            appointments.Sort("[Start]")
-
-            # Process appointments
-            events = []
-            for appointment in appointments:
-                try:
-                    # Create normalized event
-                    event = {
-                        "id": f"outlook_{appointment.EntryID}",
-                        "provider": "outlook",
-                        "provider_id": appointment.EntryID,
-                        "title": appointment.Subject,
-                        "description": appointment.Body,
-                        "location": appointment.Location,
-                        "start_time": appointment.Start.isoformat(),
-                        "end_time": appointment.End.isoformat(),
-                        "all_day": appointment.AllDayEvent,
-                        "organizer": {
-                            "email": getattr(appointment, "Organizer", None),
-                            "name": getattr(appointment, "OrganizerName", None),
-                        },
-                        "participants": [],
-                        "recurring": appointment.RecurrenceState != 0,
-                        "calendar_id": calendar_name,
-                        "calendar_name": calendar_name,
-                        "status": "confirmed" if appointment.MeetingStatus == 0 else "tentative",
-                        "created_at": appointment.CreationTime.isoformat() if hasattr(appointment, "CreationTime") else None,
-                        "updated_at": appointment.LastModificationTime.isoformat() if hasattr(appointment, "LastModificationTime") else None,
-                    }
-
-                    # Add attendees if available
-                    if hasattr(appointment, "Recipients"):
-                        for recipient in appointment.Recipients:
-                            participant = {
-                                "email": recipient.Address if hasattr(recipient, "Address") else None,
-                                "name": recipient.Name if hasattr(recipient, "Name") else None,
-                                "response_status": "accepted" if recipient.MeetingResponseStatus == 3 else "tentative"
-                            }
-                            event["participants"].append(participant)
-
-                    events.append(event)
-                except Exception as e:
-                    logger.error(f"Error processing appointment: {e}")
-                    continue
-
-            logger.info(
-                f"Collected {len(events)} events from Outlook calendar '{calendar_name}'")
-            return events
+            finally:
+                # Always uninitialize COM
+                pythoncom.CoUninitialize()
 
         except ImportError:
             logger.error(
-                "win32com package not available - required for Outlook integration")
+                "win32com package not available - required for Outlook integration on Windows")
             return []
+
+    async def _collect_outlook_mac_events(self, source: Dict[str, Any]) -> List[Dict[str, Any]]:
+        """Collect events from Outlook on Mac using SQLite database"""
+        try:
+            import sqlite3
+            from datetime import datetime, timedelta
+            import os
+
+            logger.info(
+                f"Collecting events from Outlook calendar (Mac): {source.get('name')}")
+
+            # Skip if this calendar is not enabled
+            if not source.get('enabled', True):
+                logger.info(
+                    f"Skipping disabled calendar: {source.get('name')}")
+                return []
+
+            # Find the Outlook database
+            db_path = None
+            search_paths = [
+                os.path.expanduser(
+                    "~/Library/Group Containers/UBF8T346G9.Office/Outlook/Outlook 15 Profiles/Main Profile/Data/"),
+                os.path.expanduser(
+                    "~/Library/Group Containers/UBF8T346G9.Office/Outlook/"),
+                os.path.expanduser(
+                    "~/Library/Containers/com.microsoft.Outlook/Data/Library/Application Support/Microsoft/Outlook/"),
+                os.path.expanduser(
+                    "~/Library/Group Containers/UBF8T346G9.Office/Outlook/Outlook 15 Profiles/Main Profile/Data/")
+            ]
+
+            # Add additional search paths for different Outlook versions
+            for version in ['16', '15', '']:
+                path = os.path.expanduser(
+                    f"~/Library/Group Containers/UBF8T346G9.Office/Outlook/Outlook {version} Profiles/Main Profile/Data/")
+                if path not in search_paths:
+                    search_paths.append(path)
+
+            for path in search_paths:
+                if os.path.exists(path):
+                    logger.debug(f"Searching for database in: {path}")
+                    for root, _, files in os.walk(path):
+                        for file in files:
+                            if file.endswith(('.sqlite', '.sqlitedb', '.db')) and 'calendar' in file.lower():
+                                db_path = os.path.join(root, file)
+                                logger.info(
+                                    f"Found potential database at: {db_path}")
+                                break
+                        if db_path:
+                            break
+                    if db_path:
+                        break
+
+            if not db_path:
+                logger.error(
+                    "Could not find Outlook for Mac database in any of the expected locations")
+                logger.info("Searched in the following locations:")
+                for path in search_paths:
+                    logger.info(f"- {path}")
+                return []
+
+            logger.info(f"Using Outlook database at: {db_path}")
+
+            # Connect to the database
+            conn = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
+            cursor = conn.cursor()
+
+            # Get calendar ID from source config
+            calendar_id = source.get('id')
+            if not calendar_id:
+                logger.error(
+                    "No calendar ID specified in source configuration")
+                return []
+
+            # Verify the calendar exists and get its name
+            cursor.execute("""
+                SELECT f.Folder_Name, a.Account_EmailAddress
+                FROM Folders f
+                LEFT JOIN AccountsMail a ON f.Record_AccountUID = a.Record_RecordID
+                WHERE f.Record_RecordID = ? AND f.Folder_FolderClass = 2
+            """, (calendar_id,))
+
+            result = cursor.fetchone()
+            if not result:
+                logger.error(
+                    f"Calendar with ID {calendar_id} not found in Outlook database")
+                return []
+
+            calendar_name, account_email = result
+            logger.info(
+                f"Found calendar: {calendar_name} (Account: {account_email or 'Unknown'})")
+
+            # Get events for the specified calendar
+            start_date = (datetime.now() - timedelta(days=30)
+                          ).strftime('%Y-%m-%d')
+            end_date = (datetime.now() + timedelta(days=30)
+                        ).strftime('%Y-%m-%d')
+
+            cursor.execute("""
+                SELECT 
+                    Record_RecordID, 
+                    Record_Subject, 
+                    Record_Location, 
+                    Record_StartDate, 
+                    Record_EndDate,
+                    Record_AllDayEvent,
+                    Record_IsRecurring,
+                    Record_LastModifiedTime,
+                    Record_CreationTime
+                FROM CalendarEvents
+                WHERE Record_FolderID = ?
+                AND Record_StartDate >= ?
+                AND Record_EndDate <= ?
+                ORDER BY Record_StartDate
+            """, (calendar_id, start_date, end_date))
+
+            events = []
+            for row in cursor.fetchall():
+                try:
+                    event_id, subject, location, start_date, end_date, all_day, is_recurring, modified, created = row
+
+                    # Convert dates from Mac timestamp (seconds since 2001) to ISO format
+                    def convert_mac_timestamp(timestamp):
+                        if not timestamp:
+                            return None
+                        try:
+                            # Mac timestamp is seconds since 2001-01-01
+                            dt = datetime(2001, 1, 1) + \
+                                timedelta(seconds=timestamp)
+                            return dt.isoformat()
+                        except Exception as e:
+                            logger.error(
+                                f"Error converting timestamp {timestamp}: {e}")
+                            return None
+
+                    event = {
+                        "id": str(event_id),
+                        "title": subject or "(No Title)",
+                        "description": "",  # Description is in a different table
+                        "start": convert_mac_timestamp(start_date) or "",
+                        "end": convert_mac_timestamp(end_date) or "",
+                        "location": location or "",
+                        "all_day": bool(all_day),
+                        "recurring": bool(is_recurring),
+                        "source": "outlook_mac",
+                        "source_id": str(event_id),
+                        "calendar_id": str(calendar_id),
+                        "calendar_name": calendar_name,
+                        "account_email": account_email or "",
+                        "status": "confirmed",
+                        "participants": [],
+                        "created_at": convert_mac_timestamp(created),
+                        "updated_at": convert_mac_timestamp(modified)
+                    }
+                    events.append(event)
+                except Exception as e:
+                    logger.error(f"Error processing event: {e}")
+                    continue
+
+            logger.info(
+                f"Collected {len(events)} events from Outlook calendar: {calendar_name}")
+            return events
+
+        except Exception as e:
+            logger.error(f"Error collecting Outlook for Mac events: {e}")
+            import traceback
+            logger.error(traceback.format_exc())
+            return []
+        finally:
+            try:
+                if 'conn' in locals():
+                    conn.close()
+            except Exception as e:
+                logger.error(f"Error closing database connection: {e}")
+
+    async def collect_outlook_events(self, source: Dict[str, Any]) -> List[Dict[str, Any]]:
+        """Collect events from Outlook, handling both Windows and Mac platforms"""
+        try:
+            import platform
+
+            # Skip if this calendar is not enabled
+            if not source.get('enabled', True):
+                logger.info(
+                    f"Skipping disabled calendar: {source.get('name')}")
+                return []
+
+            logger.info(
+                f"Processing Outlook calendar: {source.get('name')} (ID: {source.get('id', 'N/A')})")
+
+            if platform.system() == 'Windows':
+                return await self._collect_outlook_windows_events(source)
+            elif platform.system() == 'Darwin':  # macOS
+                return await self._collect_outlook_mac_events(source)
+            else:
+                logger.warning(
+                    f"Outlook integration is not supported on {platform.system()}")
+                return []
+
         except Exception as e:
             logger.error(f"Error collecting Outlook events: {e}")
+            import traceback
+            logger.error(traceback.format_exc())
             return []
 
     async def collect_custom_events(self, source: Dict[str, Any]) -> List[Dict[str, Any]]:
@@ -665,7 +866,7 @@ class RemoteCalendarAgent:
             return
 
         try:
-            url = f"{self.central_api_url}/api/sync/agents/{self.agent_id}/updates/{update_id}/processed"
+            url = f"{self.central_api_url}/sync/agents/{self.agent_id}/updates/{update_id}/processed"
             async with self.http_session.post(url) as response:
                 if response.status == 200:
                     logger.debug(f"Marked update {update_id} as processed")
@@ -682,7 +883,7 @@ class RemoteCalendarAgent:
             return []
 
         try:
-            url = f"{self.central_api_url}/api/sync/agents/{self.agent_id}/pending-updates"
+            url = f"{self.central_api_url}/sync/agents/{self.agent_id}/pending-updates"
             async with self.http_session.get(url) as response:
                 if response.status == 200:
                     result = await response.json()
