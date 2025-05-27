@@ -6,3 +6,5 @@
 src/sync/calendar_agent.log
 src/sync/agent_config.json
 src/sync/outlook_config.json
+src/sync/outlook_calendar_helper.log
+src/sync/outlook_mac_calendars_*.json
