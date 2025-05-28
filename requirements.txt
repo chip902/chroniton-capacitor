@@ -9,9 +9,6 @@ python-jose==3.3.0
 pytest==7.4.3
 tenacity==8.2.3
 
-# MCP integration dependencies
-openai-agents==0.0.15
-agents==1.4.0
 
 # Async support
 asyncio==3.4.3
