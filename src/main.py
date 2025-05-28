@@ -26,8 +26,10 @@ from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
-# Add current directory to path
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+# Add current directory and src directory to path
+base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+sys.path.insert(0, base_dir)
+sys.path.insert(0, os.path.join(base_dir, 'src'))
 
 # Load environment variables early
 try:
@@ -71,16 +73,11 @@ except ImportError:
         print(f"Error importing API router: {e}")
 
 try:
-    from sync_router import router as sync_router
-    print("Sync router imported")
-except ImportError:
-    try:
-        from src.api.sync_router import router as sync_router
-        print("Sync router imported with src prefix")
-    except ImportError:
-        print("Warning: Unable to import sync router")
-    except Exception as e:
-        print(f"Error importing sync router: {e}")
+    from api.sync_router import router as sync_router
+    print("Sync router imported successfully")
+except ImportError as e:
+    print(f"Error importing sync router: {e}")
+    sync_router = None
 
 try:
     from mcp.calendar_server import setup_calendar_mcp_server
@@ -148,6 +145,15 @@ async def generic_exception_handler(request: Request, exc: Exception):
         status_code=500,
         content={"message": f"Internal server error: {str(exc)}"},
     )
+
+# Include API routers
+if api_router:
+    app.include_router(api_router, prefix="/api")
+    print("API router included")
+
+if sync_router:
+    app.include_router(sync_router, prefix="/api")
+    print("Sync router included")
 
 # Configure CORS with error handling
 try:
