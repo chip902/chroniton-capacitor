@@ -144,7 +144,7 @@ class RemoteCalendarAgent:
             }
 
             # Register with central service
-            url = f"{self.central_api_url}/sync/agents"
+            url = f"{self.central_api_url}/api/sync/agents"
             async with self.http_session.post(url, json=agent_data) as response:
                 if response.status == 200:
                     result = await response.json()
@@ -187,7 +187,7 @@ class RemoteCalendarAgent:
                     heartbeat_data["events"] = events
 
             # Send heartbeat to central service
-            url = f"{self.central_api_url}/sync/agents/{self.agent_id}/heartbeat"
+            url = f"{self.central_api_url}/api/sync/agents/{self.agent_id}/heartbeat"
             async with self.http_session.post(url, json=heartbeat_data) as response:
                 if response.status == 200:
                     logger.info("Heartbeat sent successfully")
@@ -866,7 +866,7 @@ class RemoteCalendarAgent:
             return
 
         try:
-            url = f"{self.central_api_url}/sync/agents/{self.agent_id}/updates/{update_id}/processed"
+            url = f"{self.central_api_url}/api/sync/agents/{self.agent_id}/updates/{update_id}/processed"
             async with self.http_session.post(url) as response:
                 if response.status == 200:
                     logger.debug(f"Marked update {update_id} as processed")
@@ -883,7 +883,7 @@ class RemoteCalendarAgent:
             return []
 
         try:
-            url = f"{self.central_api_url}/sync/agents/{self.agent_id}/pending-updates"
+            url = f"{self.central_api_url}/api/sync/agents/{self.agent_id}/pending-updates"
             async with self.http_session.get(url) as response:
                 if response.status == 200:
                     result = await response.json()

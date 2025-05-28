@@ -323,6 +323,20 @@ async def shutdown_event():
 async def health_check():
     return {"status": "ok"}
 
+# Debug endpoint to list all routes
+@app.get("/debug/routes")
+async def list_routes():
+    routes = []
+    for route in app.routes:
+        if hasattr(route, 'methods'):
+            routes.append({
+                'path': route.path,
+                'methods': sorted(list(route.methods)),
+                'name': route.name,
+                'endpoint': route.endpoint.__name__ if hasattr(route.endpoint, '__name__') else str(route.endpoint)
+            })
+    return {"routes": routes}
+
 # Direct execution for development
 if __name__ == "__main__":
     uvicorn.run("main:app", host="0.0.0.0", port=8008, reload=True)
