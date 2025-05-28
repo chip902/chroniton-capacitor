@@ -23,10 +23,16 @@ RUN useradd -m appuser && \
     chown -R appuser:appuser /app
 
 # Copy requirements first to leverage Docker cache
-COPY --chown=appuser:appuser requirements.txt .
+COPY --chown=appuser:appuser requirements.minimal.txt .
 
 # Install Python dependencies
-RUN pip install --no-cache-dir -r requirements.txt
+RUN pip install --no-cache-dir -r requirements.minimal.txt \
+    msal \
+    msgraph-sdk \
+    python-dateutil \
+    tzlocal \
+    pytz \
+    tenacity
 
 # Copy application code
 COPY --chown=appuser:appuser . .
