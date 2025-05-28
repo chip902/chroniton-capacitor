@@ -32,7 +32,18 @@ RUN pip install --no-cache-dir -r requirements.minimal.txt \
     python-dateutil \
     tzlocal \
     pytz \
-    tenacity
+    tenacity \
+    google-api-python-client \
+    google-auth-oauthlib \
+    google-auth-httplib2 \
+    google-auth \
+    oauth2client \
+    python-jose[cryptography] \
+    passlib[bcrypt] \
+    python-multipart \
+    email-validator \
+    pydantic-settings \
+    python-dotenv
 
 # Copy application code
 COPY --chown=appuser:appuser . .
