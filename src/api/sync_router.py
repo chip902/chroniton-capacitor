@@ -21,6 +21,8 @@ from sync.storage import SyncStorageManager
 router = APIRouter(prefix="/sync", tags=["sync"])
 
 # Dependency to get sync controller
+
+
 async def get_sync_controller():
     """Create and initialize a sync controller"""
     storage = SyncStorageManager()
@@ -32,6 +34,8 @@ async def get_sync_controller():
         await storage.close()
 
 # Configuration endpoints
+
+
 @router.get("/config")
 async def get_configuration(
     controller: CalendarSyncController = Depends(get_sync_controller)
@@ -49,6 +53,7 @@ async def get_configuration(
             detail=f"Failed to load configuration: {str(e)}"
         )
 
+
 @router.post("/config/destination")
 async def configure_destination(
     destination: SyncDestination,
@@ -65,6 +70,8 @@ async def configure_destination(
         )
 
 # Source management endpoints
+
+
 @router.get("/sources")
 async def list_sources(
     controller: CalendarSyncController = Depends(get_sync_controller)
@@ -82,6 +89,7 @@ async def list_sources(
             detail=f"Failed to list sources: {str(e)}"
         )
 
+
 @router.post("/sources")
 async def add_source(
     source: SyncSource,
@@ -92,7 +100,7 @@ async def add_source(
         # Ensure the source has an ID
         if not source.id:
             source.id = str(uuid.uuid4())
-        
+
         result = await controller.add_sync_source(source)
         return result.dict()
     except HTTPException:
@@ -102,6 +110,7 @@ async def add_source(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=f"Failed to add source: {str(e)}"
         )
+
 
 @router.put("/sources/{source_id}")
 async def update_source(
@@ -121,6 +130,7 @@ async def update_source(
             detail=f"Failed to update source: {str(e)}"
         )
 
+
 @router.delete("/sources/{source_id}")
 async def remove_source(
     source_id: str,
@@ -139,6 +149,8 @@ async def remove_source(
         )
 
 # Agent management endpoints
+
+
 @router.post("/agents")
 async def add_agent(
     agent: SyncAgentConfig,
@@ -149,7 +161,7 @@ async def add_agent(
         # Ensure the agent has an ID
         if not agent.id:
             agent.id = str(uuid.uuid4())
-        
+
         result = await controller.add_sync_agent(agent)
         return result.dict()
     except HTTPException:
@@ -159,6 +171,7 @@ async def add_agent(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=f"Failed to add agent: {str(e)}"
         )
+
 
 @router.get("/agents")
 async def list_agents(
@@ -177,6 +190,7 @@ async def list_agents(
             detail=f"Failed to list agents: {str(e)}"
         )
 
+
 @router.get("/agents/status")
 async def check_agent_status(
     controller: CalendarSyncController = Depends(get_sync_controller)
@@ -190,6 +204,7 @@ async def check_agent_status(
             detail=f"Failed to check agent status: {str(e)}"
         )
 
+
 @router.post("/agents/{agent_id}/heartbeat")
 async def agent_heartbeat(
     agent_id: str,
@@ -197,6 +212,8 @@ async def agent_heartbeat(
     controller: CalendarSyncController = Depends(get_sync_controller)
 ):
     """Register a heartbeat from a sync agent"""
+    print(f"Heartbeat received from agent {agent_id}: {data}")  # Add this line
+
     try:
         return await controller.register_agent_heartbeat(agent_id, data)
     except HTTPException:
@@ -208,6 +225,8 @@ async def agent_heartbeat(
         )
 
 # Synchronization endpoints
+
+
 @router.post("/run")
 async def sync_all_calendars(
     controller: CalendarSyncController = Depends(get_sync_controller)
@@ -220,6 +239,7 @@ async def sync_all_calendars(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Synchronization failed: {str(e)}"
         )
+
 
 @router.post("/run/{source_id}")
 async def sync_single_source(
@@ -241,6 +261,8 @@ async def sync_single_source(
         )
 
 # Import endpoints
+
+
 @router.post("/import/{source_id}")
 async def import_events(
     source_id: str,
@@ -251,10 +273,10 @@ async def import_events(
     try:
         # Store the imported events
         await controller.storage.save_import_data(source_id, events)
-        
+
         # Trigger a sync for this source
         sync_result = await controller.sync_single_source(source_id)
-        
+
         return {
             "status": "success",
             "events_imported": len(events),
@@ -267,6 +289,8 @@ async def import_events(
         )
 
 # Bidirectional sync endpoints for pushing changes to agents
+
+
 @router.post("/push/calendar-metadata")
 async def push_calendar_metadata_changes(
     changes: Dict[str, Any] = Body(...),
@@ -281,6 +305,7 @@ async def push_calendar_metadata_changes(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Failed to push calendar metadata changes: {str(e)}"
         )
+
 
 @router.post("/push/sync-config")
 async def push_sync_configuration_updates(
@@ -297,6 +322,7 @@ async def push_sync_configuration_updates(
             detail=f"Failed to push sync config updates: {str(e)}"
         )
 
+
 @router.post("/agents/{agent_id}/receive-updates")
 async def send_updates_to_agent(
     agent_id: str,
@@ -312,6 +338,7 @@ async def send_updates_to_agent(
             detail=f"Failed to send updates to agent: {str(e)}"
         )
 
+
 @router.get("/agents/{agent_id}/pending-updates")
 async def get_pending_updates_for_agent(
     agent_id: str,
@@ -325,6 +352,7 @@ async def get_pending_updates_for_agent(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=f"Failed to get pending updates: {str(e)}"
         )
+
 
 @router.post("/agents/{agent_id}/updates/{update_id}/processed")
 async def mark_update_processed(
