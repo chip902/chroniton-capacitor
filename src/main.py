@@ -316,14 +316,9 @@ async def shutdown_event():
         except Exception as e:
             print(f"Error closing sync storage: {e}")
 
-# Mount routers
-if api_router:
-    app.include_router(api_router, prefix="/api")
-
-if sync_router:
-    app.include_router(sync_router, prefix="/api")
-
 # Health check endpoint
+
+
 @app.get("/health")
 async def health_check():
     return {"status": "ok"}
