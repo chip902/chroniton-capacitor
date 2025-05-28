@@ -26,24 +26,7 @@ RUN useradd -m appuser && \
 COPY --chown=appuser:appuser requirements.minimal.txt .
 
 # Install Python dependencies
-RUN pip install --no-cache-dir -r requirements.minimal.txt \
-    msal \
-    msgraph-sdk \
-    python-dateutil \
-    tzlocal \
-    pytz \
-    tenacity \
-    google-api-python-client \
-    google-auth-oauthlib \
-    google-auth-httplib2 \
-    google-auth \
-    oauth2client \
-    python-jose[cryptography] \
-    passlib[bcrypt] \
-    python-multipart \
-    email-validator \
-    pydantic-settings \
-    python-dotenv
+RUN pip install --no-cache-dir -r requirements.minimal.txt
 
 # Copy application code
 COPY --chown=appuser:appuser . .
