@@ -13,13 +13,13 @@ from datetime import datetime
 
 
 def get_outlook_mac_database_path():
-    """Find the path to the Outlook for Mac database"""
-    # Direct path to the Outlook database
+    """Get the path to the Outlook for Mac database"""
+    # Use the exact path where we found the database
     db_path = os.path.expanduser(
         "~/Library/Group Containers/UBF8T346G9.Office/Outlook/Outlook 15 Profiles/Main Profile/Data/Outlook.sqlite"
     )
 
-    print(f"\nChecking for Outlook database at: {db_path}")
+    print(f"Checking: {db_path}")
 
     if os.path.exists(db_path):
         print("  Found Outlook database")
@@ -29,13 +29,13 @@ def get_outlook_mac_database_path():
             cursor = conn.cursor()
             cursor.execute(
                 "SELECT name FROM sqlite_master WHERE type='table';")
-            tables = [row[0] for row in cursor.fetchall()]
+            tables = cursor.fetchall()
+            required_tables = {'Folders', 'AccountsMail', 'AccountsExchange'}
+            table_names = {table[0] for table in tables}
             conn.close()
 
-            # Check for required tables
-            required_tables = {'Folders', 'CalendarEvents', 'AccountsMail'}
-            if required_tables.issubset(tables):
-                print("  Database contains required tables")
+            if required_tables.issubset(table_names):
+                print(f"  Found all required tables in {db_path}")
                 return db_path
             else:
                 print(
@@ -45,9 +45,6 @@ def get_outlook_mac_database_path():
         except sqlite3.Error as e:
             print(f"  Error accessing database: {e}")
             return None
-    else:
-        print("  Error: Database file not found at the expected location")
-        return None
 
 
 def get_outlook_mac_calendars():
