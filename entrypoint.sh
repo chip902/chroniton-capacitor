@@ -9,9 +9,15 @@ python --version
 echo -e "\n=== System Information ==="
 uname -a
 
-# Show environment variables
+# Generate a default SECRET_KEY if not set
+if [ -z "$SECRET_KEY" ]; then
+    export SECRET_KEY=$(python -c 'import secrets; print(secrets.token_hex(32))')
+    echo "WARNING: SECRET_KEY was not set. Generated a temporary one."
+fi
+
+# Show environment variables (excluding sensitive ones)
 echo -e "\n=== Environment Variables ==="
-printenv | sort
+printenv | grep -v -E 'SECRET_KEY|PASSWORD|TOKEN|KEY|SECRET' | sort
 
 # Show directory structure
 echo -e "\n=== Directory Structure ==="
