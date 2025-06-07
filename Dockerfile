@@ -25,9 +25,10 @@ RUN useradd -m appuser && \
 # Copy requirements first to leverage Docker cache
 COPY --chown=appuser:appuser requirements.minimal.txt requirements.txt ./
 
-# Install Python dependencies with specific focus on Microsoft Graph SDK
-RUN pip install --no-cache-dir -r requirements.minimal.txt -r requirements.txt && \
-    pip install --no-cache-dir msgraph-core==0.2.2 msgraph-sdk==1.0.0 azure-identity
+# Install Python dependencies (handling requirements files separately to avoid conflicts)
+RUN pip install --no-cache-dir -r requirements.minimal.txt && \
+    pip install --no-cache-dir -r requirements.txt && \
+    pip install --no-cache-dir msgraph-core>=1.0.0 msgraph-sdk>=1.0.0 azure-identity
 
 # Copy application code
 COPY --chown=appuser:appuser . .
