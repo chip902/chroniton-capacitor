@@ -3,17 +3,8 @@ import time
 from typing import Dict, Optional, List
 from fastapi import HTTPException, status
 
-# Import the client with compatibility for different package structures
-try:
-    # New msgraph-core import path
-    from msgraph_core import GraphClient
-except ImportError:
-    try:
-        # Legacy msgraph.core import path
-        from msgraph.core import GraphClient
-    except ImportError:
-        raise ImportError(
-            "Could not import GraphClient from either msgraph_core or msgraph.core")
+# Import our custom graph adapter instead of relying on msgraph SDK structure
+from auth.graph_adapter import GraphClient
 
 from utils.config import settings
 
