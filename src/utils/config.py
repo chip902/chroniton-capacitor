@@ -26,9 +26,31 @@ class Settings(BaseSettings):
     @validator("CORS_ORIGINS", pre=True)
     def parse_cors_origins(cls, v):
         if isinstance(v, str):
-            if v.strip() == "*":
+            # Remove any surrounding whitespace
+            v = v.strip()
+            
+            # Handle wildcard as a special case
+            if v == "*":
                 return ["*"]  # Convert wildcard to a single-item list
+                
+            # Try to parse as JSON if it looks like JSON
+            if (v.startswith('[') and v.endswith(']')) or (v.startswith('{') and v.endswith('}')):
+                try:
+                    import json
+                    parsed = json.loads(v)
+                    if isinstance(parsed, list):
+                        return parsed
+                    elif isinstance(parsed, dict):  # Not expected, but handle just in case
+                        return list(parsed.values())
+                    return [str(parsed)]  # Convert to string and wrap in list as fallback
+                except Exception as e:
+                    import logging
+                    logging.warning(f"Failed to parse CORS_ORIGINS as JSON: {e}. Using as comma-separated string.")
+            
+            # Fallback to comma-separated format
             return [origin.strip() for origin in v.split(",") if origin.strip()]
+            
+        # If it's already a list or other non-string type, return as is
         return v
 
     # Security

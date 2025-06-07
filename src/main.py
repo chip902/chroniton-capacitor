@@ -18,9 +18,20 @@
 # ]
 # ///
 
+import asyncio
+import logging
 import os
 import sys
-import asyncio
+
+# Apply aioredis patch first, before any other imports
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
+try:
+    from aioredis_patch import apply_aioredis_patch
+    apply_aioredis_patch()
+    logging.info("Applied aioredis compatibility patch")
+except ImportError:
+    logging.warning("Could not import aioredis patch, continuing anyway")
+
 import uvicorn
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
