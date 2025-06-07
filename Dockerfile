@@ -28,13 +28,18 @@ COPY --chown=appuser:appuser requirements.txt ./
 
 # Install Python dependencies with compatible versions
 RUN pip install --no-cache-dir -U pip setuptools wheel && \
-    # Install requirements first (excluding problematic package combinations)
-    pip install --no-cache-dir -r requirements.txt && \
-    # Explicitly install Redis packages separately with versions known to work together
-    pip install --no-cache-dir redis==5.0.1 && \
+    # Install key dependencies first to ensure they're properly resolved
+    pip install --no-cache-dir google-api-python-client==2.108.0 && \
+    pip install --no-cache-dir google-auth==2.23.4 && \
     pip install --no-cache-dir aioredis==2.0.1 && \
-    # Make sure Google API client is installed correctly
-    pip install --no-cache-dir --force-reinstall google-api-python-client==2.108.0 && \
+    pip install --no-cache-dir redis==5.0.1 && \
+    # Now install the rest of the requirements
+    pip install --no-cache-dir -r requirements.txt && \
+    # Verify all critical imports work properly
+    python -c "import sys; print('Python version:', sys.version)" && \
+    python -c "import googleapiclient; print('Google API client version:', googleapiclient.__version__)" && \
+    python -c "import aioredis; print('Aioredis version:', aioredis.__version__)" && \
+    python -c "import redis; print('Redis version:', redis.__version__)" && \
     # Verify installation
     echo "Installed packages:" && \
     pip freeze
