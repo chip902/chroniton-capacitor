@@ -26,7 +26,8 @@ RUN useradd -m appuser && \
 COPY --chown=appuser:appuser requirements.txt ./
 
 # Install Python dependencies with compatible versions
-RUN pip install --no-cache-dir -r requirements.txt
+RUN pip install --no-cache-dir -r requirements.txt && \
+    pip install --no-cache-dir aioredis==2.0.1 redis>=4.6.0
 
 # Copy application code
 COPY --chown=appuser:appuser . .
