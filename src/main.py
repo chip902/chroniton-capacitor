@@ -77,7 +77,25 @@ try:
     print("Sync router imported successfully")
 except ImportError as e:
     print(f"Error importing sync router: {e}")
-    sync_router = None
+    
+    # Try to install aioredis and retry the import
+    if "No module named 'aioredis'" in str(e):
+        print("Attempting to install missing aioredis package...")
+        import subprocess
+        try:
+            subprocess.check_call(["pip", "install", "aioredis==2.0.1"])
+            print("Successfully installed aioredis, retrying import...")
+            try:
+                from api.sync_router import router as sync_router
+                print("Sync router imported successfully after installing aioredis")
+            except ImportError as e2:
+                print(f"Still failed to import sync_router after installing aioredis: {e2}")
+                sync_router = None
+        except Exception as install_err:
+            print(f"Failed to install aioredis: {install_err}")
+            sync_router = None
+    else:
+        sync_router = None
 
 try:
     from mcp.calendar_server import setup_calendar_mcp_server
