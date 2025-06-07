@@ -145,13 +145,41 @@ except ImportError:
     except Exception as e:
         print(f"Error importing calendar sync controller: {e}")
 
+# Use hardcoded override settings instead of parsing from environment variables
 try:
-    from utils.config import settings
-    print("Settings imported")
+    # First try to import our override settings
+    try:
+        from src.utils.override_settings import settings
+        print("Override settings imported successfully")
+    except ImportError:
+        try:
+            from utils.override_settings import settings
+            print("Override settings imported with direct path")
+        except ImportError:
+            try:
+                from .utils.override_settings import settings
+                print("Override settings imported with relative import")
+            except ImportError:
+                # Last resort - try config settings
+                import sys
+                sys.path.insert(0, os.path.abspath(os.path.dirname(os.path.dirname(__file__))))
+                try:
+                    from utils.override_settings import settings
+                    print("Override settings imported after path manipulation")
+                except Exception as e:
+                    print(f"Failed to import settings: {e}")
+                    
+                    # If override settings fail, try original settings as fallback
+                    try:
+                        from utils.config import settings
+                        print("Original settings imported as fallback")
+                    except Exception as e:
+                        print(f"Failed to import any settings: {e}")
+                        settings = None
 except ImportError:
     try:
         from utils.config import settings
-        print("Settings imported with src prefix")
+        print("Original settings imported")
     except ImportError:
         print("Warning: Unable to import settings")
     except Exception as e:
@@ -186,36 +214,16 @@ if sync_router:
     app.include_router(sync_router)
     print("Sync router included")
 
-# Configure CORS with error handling
-try:
-    if settings and hasattr(settings, 'CORS_ORIGINS'):
-        app.add_middleware(
-            CORSMiddleware,
-            allow_origins=settings.CORS_ORIGINS,
-            allow_credentials=True,
-            allow_methods=["*"],
-            allow_headers=["*"],
-        )
-        print(f"CORS configured with origins: {settings.CORS_ORIGINS}")
-    else:
-        app.add_middleware(
-            CORSMiddleware,
-            allow_origins=["*"],  # Fallback to allow all origins
-            allow_credentials=True,
-            allow_methods=["*"],
-            allow_headers=["*"],
-        )
-        print("CORS configured with default settings (all origins)")
-except Exception as e:
-    print(f"Error configuring CORS: {e}")
-    # Still add middleware with safe defaults
-    app.add_middleware(
-        CORSMiddleware,
-        allow_origins=["*"],
-        allow_credentials=True,
-        allow_methods=["*"],
-        allow_headers=["*"],
-    )
+# Configure CORS with hardcoded wildcard origins
+# Hardcode CORS to allow all origins (*) for development
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],  # Allow all origins
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+print("CORS configured with wildcard (*) to allow all origins")
 
 # Include API routers with error handling
 try:

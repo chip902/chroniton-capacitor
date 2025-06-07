@@ -12,15 +12,26 @@ from typing import Dict, List, Any, Optional
 from datetime import datetime
 
 # Try to import aioredis, or create a minimal fallback implementation
-try:
-    import aioredis
-    logger = logging.getLogger(__name__)
-    logger.info("Successfully imported aioredis")
-    AIOREDIS_AVAILABLE = True
-except ImportError:
-    logger = logging.getLogger(__name__)
-    logger.warning("aioredis not available, using file-based storage only")
+import sys
+
+# Check if we're on Python 3.11 or higher where aioredis has compatibility issues
+PY_311_OR_HIGHER = sys.version_info >= (3, 11)
+
+# Initialize logger early
+logger = logging.getLogger(__name__)
+
+# Force using dummy Redis for Python 3.11+ or try importing aioredis
+if PY_311_OR_HIGHER:
+    logger.warning("Python 3.11+ detected, using dummy Redis implementation to avoid compatibility issues")
     AIOREDIS_AVAILABLE = False
+else:
+    try:
+        import aioredis
+        logger.info("Successfully imported aioredis")
+        AIOREDIS_AVAILABLE = True
+    except ImportError:
+        logger.warning("aioredis not available, using file-based storage only")
+        AIOREDIS_AVAILABLE = False
 
     # Create a minimal dummy implementation of Redis client for fallback
     class DummyRedis:

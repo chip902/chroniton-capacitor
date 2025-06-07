@@ -11,13 +11,8 @@ services:
         env_file:
             - .env
         environment:
-            - ENVIRONMENT=development
-            - DEBUG=1
-            - LOG_LEVEL=DEBUG
             - REDIS_HOST=redis
             - REDIS_PORT=6379
-            - SECRET_KEY=development_secret_key_not_for_production_abcdefghijklmnopqrstuvwxyz1234
-            - CORS_ORIGINS=["*"]
         volumes:
             - ./src:/app/src
             - ./entrypoint.sh:/app/entrypoint.sh

@@ -1,0 +1,25 @@
+services:
+  sync-server:
+    build:
+      context: .
+      dockerfile: sync_server_dockerfile
+    restart: unless-stopped
+    ports:
+      - "8008:8008"
+    environment:
+      - API_PORT=8008
+      - API_HOST=0.0.0.0
+    volumes:
+      - ./simple_sync_server.py:/app/simple_sync_server.py
+    networks:
+      - sync-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8008/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 20s
+
+networks:
+  sync-network:
+    driver: bridge
