@@ -22,9 +22,17 @@ class Settings(BaseSettings):
         "http://localhost:8000",
         "https://yourapp.com"
     ]
+    
+    @validator("CORS_ORIGINS", pre=True)
+    def parse_cors_origins(cls, v):
+        if isinstance(v, str):
+            if v.strip() == "*":
+                return ["*"]  # Convert wildcard to a single-item list
+            return [origin.strip() for origin in v.split(",") if origin.strip()]
+        return v
 
     # Security
-    SECRET_KEY: str = Field(..., min_length=32)
+    SECRET_KEY: str = Field("development_secret_key_not_for_production_abcdefghijklmnopqrstuvwxyz1234", min_length=32)
     ALLOWED_HOSTS: List[str] = ["*"]
 
     # Google Calendar settings
