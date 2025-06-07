@@ -1,66 +1,10 @@
-version: "3.8"
-
+version: "3"
 services:
-    calendar-service:
-        build:
-            context: .
-            dockerfile: Dockerfile
-        restart: unless-stopped
+    test-calendar-service:
+        build: .
         ports:
             - "8008:8008"
-        env_file:
-            - .env
         environment:
-            - ENVIRONMENT=development
             - DEBUG=1
             - LOG_LEVEL=DEBUG
-            - REDIS_HOST=redis
-            - REDIS_PORT=6379
-            - SECRET_KEY=development_secret_key_not_for_production_abcdefghijklmnopqrstuvwxyz1234
-            # Explicitly set CORS_ORIGINS as a single-item list to avoid parsing issues
-            - CORS_ORIGINS=["*"]
-        volumes:
-            - ./src:/app/src
-            - ./entrypoint.sh:/app/entrypoint.sh
-            - calendar-storage:/app/storage
-        depends_on:
-            redis:
-                condition: service_healthy
-        networks:
-            - calendar-network
-        healthcheck:
-            test: ["CMD", "curl", "-f", "http://localhost:8008/health"]
-            interval: 30s
-            timeout: 10s
-            retries: 3
-            start_period: 20s
-
-
-    redis:
-        image: redis:7-alpine
-        restart: unless-stopped
-        command: >
-            sh -c 'if [ -n "$REDIS_PASSWORD" ]; then 
-                     redis-server --appendonly yes --requirepass "$REDIS_PASSWORD"; 
-                   else 
-                     redis-server --appendonly yes; 
-                   fi'
-        volumes:
-            - redis-data:/data
-        environment:
-            - REDIS_PASSWORD=${REDIS_PASSWORD:-}
-        networks:
-            - calendar-network
-        healthcheck:
-            test: ["CMD", "sh", "-c", "if [ -n \"$REDIS_PASSWORD\" ]; then redis-cli -a \"$REDIS_PASSWORD\" ping; else redis-cli ping; fi"]
-            interval: 10s
-            timeout: 5s
-            retries: 5
-
-networks:
-    calendar-network:
-        driver: bridge
-
-volumes:
-    calendar-storage:
-    redis-data:
+        command: python -m uvicorn simplified_main:app --host 0.0.0.0 --port 8008
