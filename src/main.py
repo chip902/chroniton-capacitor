@@ -77,7 +77,7 @@ try:
     print("Sync router imported successfully")
 except ImportError as e:
     print(f"Error importing sync router: {e}")
-    
+
     # Try to install aioredis and retry the import
     if "No module named 'aioredis'" in str(e):
         print("Attempting to install missing aioredis package...")
@@ -89,7 +89,8 @@ except ImportError as e:
                 from api.sync_router import router as sync_router
                 print("Sync router imported successfully after installing aioredis")
             except ImportError as e2:
-                print(f"Still failed to import sync_router after installing aioredis: {e2}")
+                print(
+                    f"Still failed to import sync_router after installing aioredis: {e2}")
                 sync_router = None
         except Exception as install_err:
             print(f"Failed to install aioredis: {install_err}")
