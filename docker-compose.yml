@@ -17,7 +17,6 @@ services:
             - REDIS_HOST=redis
             - REDIS_PORT=6379
             - SECRET_KEY=development_secret_key_not_for_production_abcdefghijklmnopqrstuvwxyz1234
-            # Explicitly set CORS_ORIGINS as a single-item list to avoid parsing issues
             - CORS_ORIGINS=["*"]
         volumes:
             - ./src:/app/src
