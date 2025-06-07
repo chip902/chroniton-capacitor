@@ -22,13 +22,11 @@ RUN useradd -m appuser && \
     mkdir -p /app/storage && \
     chown -R appuser:appuser /app
 
-# Copy requirements first to leverage Docker cache
-COPY --chown=appuser:appuser requirements.minimal.txt requirements.txt ./
+# Copy requirements file to leverage Docker cache
+COPY --chown=appuser:appuser requirements.txt ./
 
-# Install Python dependencies (handling requirements files separately to avoid conflicts)
-RUN pip install --no-cache-dir -r requirements.minimal.txt && \
-    pip install --no-cache-dir -r requirements.txt && \
-    pip install --no-cache-dir msgraph-core>=1.0.0 msgraph-sdk>=1.0.0 azure-identity
+# Install Python dependencies with compatible versions
+RUN pip install --no-cache-dir -r requirements.txt
 
 # Copy application code
 COPY --chown=appuser:appuser . .
