@@ -171,7 +171,8 @@ if api_router:
     print("API router included")
 
 if sync_router:
-    app.include_router(sync_router, prefix="/api")
+    # No prefix needed as the router already has prefix='/sync'
+    app.include_router(sync_router)
     print("Sync router included")
 
 # Configure CORS with error handling
