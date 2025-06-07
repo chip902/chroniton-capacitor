@@ -198,7 +198,8 @@ except Exception as e:
 
 try:
     if sync_router:
-        app.include_router(sync_router, prefix="/api")
+        # No prefix needed as the router already has prefix='/sync'
+        app.include_router(sync_router)
         print("Sync router included")
     else:
         print("Warning: Sync router not included")
@@ -330,6 +331,8 @@ async def health_check():
     return {"status": "ok"}
 
 # Debug endpoint to list all routes
+
+
 @app.get("/debug/routes")
 async def list_routes():
     routes = []
