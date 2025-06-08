@@ -121,7 +121,7 @@ class GoogleCalendarAuth:
 
         return {"auth_url": auth_url}
 
-    async def exchange_code(self, code: str) -> Dict[str, str]:
+    async def exchange_code(self, code: str, redirect_uri: Optional[str] = None) -> Dict[str, str]:
         """Exchange authorization code for tokens"""
         if self.dummy_mode:
             return {
@@ -132,6 +132,9 @@ class GoogleCalendarAuth:
             }
 
         try:
+            # Use provided redirect_uri or fall back to configured default
+            actual_redirect_uri = redirect_uri or self.redirect_uri
+
             flow = Flow.from_client_config(
                 {
                     "web": {
@@ -139,13 +142,15 @@ class GoogleCalendarAuth:
                         "client_secret": self.client_secret,
                         "auth_uri": "https://accounts.google.com/o/oauth2/auth",
                         "token_uri": "https://oauth2.googleapis.com/token",
-                        "redirect_uris": [self.redirect_uri]
+                        # Use dynamic redirect URI
+                        "redirect_uris": [actual_redirect_uri]
                     }
                 },
                 scopes=SCOPES
             )
 
-            flow.redirect_uri = self.redirect_uri
+            # IMPORTANT: Use the same redirect_uri that was used for auth URL creation
+            flow.redirect_uri = actual_redirect_uri
 
             # Exchange authorization code for tokens
             flow.fetch_token(code=code)

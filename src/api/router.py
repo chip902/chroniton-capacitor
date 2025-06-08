@@ -47,9 +47,12 @@ async def google_auth_url(
 
 
 @router.get("/auth/google/callback")
-async def google_auth_callback(code: str):
+async def google_auth_callback(
+    code: str,
+    redirect_uri: Optional[str] = None
+):
     """Handle Google OAuth callback and exchange code for tokens"""
-    token_info = await google_auth.exchange_code(code)
+    token_info = await google_auth.exchange_code(code, redirect_uri)
     return token_info
 
 
