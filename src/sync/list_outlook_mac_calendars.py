@@ -171,14 +171,15 @@ def get_outlook_mac_calendars():
 def main():
     """Main function to list calendars and generate config"""
     # Parse command line arguments
-    parser = argparse.ArgumentParser(description="Outlook for Mac Calendar Configuration Generator")
-    parser.add_argument("--output", "-o", default="outlook_config.json", 
-                      help="Output file name for the configuration (default: outlook_config.json)")
+    parser = argparse.ArgumentParser(
+        description="Outlook for Mac Calendar Configuration Generator")
+    parser.add_argument("--output", "-o", default="outlook_config.json",
+                        help="Output file name for the configuration (default: outlook_config.json)")
     parser.add_argument("--backup", "-b", action="store_true",
-                      help="Create a timestamped backup file in addition to the main output")
-    
+                        help="Create a timestamped backup file in addition to the main output")
+
     args = parser.parse_args()
-    
+
     print("\n=== Outlook for Mac Calendar Configuration Helper ===\n")
     print("Searching for Outlook calendars...\n")
 
@@ -198,7 +199,7 @@ def main():
         print(f"   Type: {cal['account_type']}")
         print(f"   Events: {cal['event_count']}")
         print(f"   Color: {cal['color']}")
-    
+
     # Enhanced calendar data for better compatibility with agent
     calendar_sources = []
     for cal in calendars:
@@ -220,7 +221,7 @@ def main():
             'last_sync': ""
         }
         calendar_sources.append(config)
-    
+
     # Generate config snippet for display
     print("\n=== Configuration Snippet ===\n")
     print("Use the following in your agent_config.json file (calendar_sources section):")
@@ -234,16 +235,18 @@ def main():
 
     # Save to the specified output file
     with open(args.output, 'w', encoding='utf-8') as f:
-        json.dump(calendar_sources, f, indent=2, ensure_ascii=False, default=str)
-    
+        json.dump(calendar_sources, f, indent=2,
+                  ensure_ascii=False, default=str)
+
     print(f"\nConfiguration saved to: {os.path.abspath(args.output)}")
-    
+
     # Create timestamped backup if requested
     if args.backup:
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         backup_file = f"outlook_mac_calendars_{timestamp}.json"
         with open(backup_file, 'w', encoding='utf-8') as f:
-            json.dump(calendar_sources, f, indent=2, ensure_ascii=False, default=str)
+            json.dump(calendar_sources, f, indent=2,
+                      ensure_ascii=False, default=str)
         print(f"Backup saved to: {os.path.abspath(backup_file)}")
 
 

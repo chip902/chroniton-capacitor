@@ -128,7 +128,7 @@ class RemoteCalendarAgent:
         """Register this agent with the central calendar service"""
         if not self.central_api_url:
             logger.warning("Cannot register: central_api_url not configured")
-            return
+            return False
 
         try:
             # Prepare registration data
@@ -137,18 +137,21 @@ class RemoteCalendarAgent:
                 "name": self.agent_name,
                 "environment": self.environment,
                 "agent_type": "python",
-                "communication_method": "api",
-                "api_endpoint": None,  # Will be assigned by central service
                 "interval_minutes": self.sync_interval,
-                "sources": []  # Will be configured later
+                "capabilities": ["calendar_sync"],
+                "config": {
+                    "version": "1.0.0",
+                    "platform": platform.system().lower(),
+                    "python_version": platform.python_version()
+                }
             }
 
             # Register with central service
-            url = f"{self.central_api_url}/sync/agents"
+            url = f"{self.central_api_url}/sync/agents/register"
             async with self.http_session.post(url, json=agent_data) as response:
-                if response.status == 200:
-                    result = await response.json()
+                result = await response.json()
 
+                if response.status == 201:  # 201 Created
                     # Update agent ID if it was assigned by the central service
                     if "id" in result and result["id"] != self.agent_id:
                         self.agent_id = result["id"]
@@ -157,54 +160,78 @@ class RemoteCalendarAgent:
 
                     logger.info(
                         f"Agent registered successfully with ID: {self.agent_id}")
+                    return True
                 else:
-                    error_text = await response.text()
+                    error_detail = result.get("detail", "No details provided")
                     logger.error(
-                        f"Failed to register agent: {response.status} - {error_text}")
+                        f"Failed to register agent: {response.status} - {error_detail}"
+                    )
+                    return False
 
         except Exception as e:
             logger.error(f"Error registering with central service: {e}")
+            return False
 
     async def send_heartbeat(self, include_events: bool = False):
         """Send heartbeat to central service"""
         if not self.central_api_url or not self.agent_id:
             logger.warning(
                 "Cannot send heartbeat: missing central_api_url or agent_id")
-            return
+            return None
 
         try:
             # Prepare heartbeat data
             heartbeat_data = {
                 "timestamp": datetime.utcnow().isoformat(),
                 "status": "active",
-                "environment": self.environment
+                "environment": self.environment,
+                "stats": {
+                    "cpu_percent": 0,  # TODO: Add system stats
+                    "memory_percent": 0,
+                    "events_processed": 0
+                }
             }
 
             # Include events if requested
             if include_events:
                 events = await self.collect_all_events()
                 if events:
-                    heartbeat_data["events"] = events
+                    heartbeat_data["events"] = [e.dict() for e in events]
 
             # Send heartbeat to central service
             url = f"{self.central_api_url}/sync/agents/{self.agent_id}/heartbeat"
             async with self.http_session.post(url, json=heartbeat_data) as response:
+                result = await response.json()
+
                 if response.status == 200:
                     logger.info("Heartbeat sent successfully")
-                    result = await response.json()
 
                     # Check for pending updates from central service
-                    if result and "pending_updates" in result:
+                    if result and "pending_updates" in result and result["pending_updates"]:
+                        logger.info(
+                            f"Received {len(result['pending_updates'])} pending updates")
                         await self.process_pending_updates(result["pending_updates"])
 
                     return result
                 else:
-                    error_text = await response.text()
+                    error_detail = result.get("detail", "No details provided")
                     logger.error(
-                        f"Failed to send heartbeat: {response.status} - {error_text}")
+                        f"Heartbeat failed: {response.status} - {error_detail}"
+                    )
+
+                    # If we get a 404, the agent might need to re-register
+                    if response.status == 404:
+                        logger.info(
+                            "Agent not found, attempting to re-register...")
+                        if await self.register_with_central_service():
+                            # Retry the heartbeat after successful registration
+                            return await self.send_heartbeat(include_events)
+
+                    return None
 
         except Exception as e:
             logger.error(f"Error sending heartbeat: {e}")
+            return None
 
     async def collect_all_events(self) -> List[Dict[str, Any]]:
         """Collect events from all configured calendar sources"""
