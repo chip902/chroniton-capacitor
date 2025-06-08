@@ -80,13 +80,17 @@ class GoogleCalendarAuth:
         else:
             print("Google Calendar authentication initialized successfully")
 
-    def create_auth_url(self, tenant_id: Optional[str] = None) -> Dict[str, str]:
+    def create_auth_url(self, tenant_id: Optional[str] = None, redirect_uri: Optional[str] = None) -> Dict[str, str]:
         """
         Create authentication URL for Google OAuth flow
         Optionally specify a tenant_id for multi-tenant applications
+        Optionally specify a custom redirect_uri for different environments
         """
         if self.dummy_mode:
             return {"auth_url": "https://dummy-auth-url.example.com", "state": "dummy-state"}
+
+        # Use provided redirect_uri or fall back to configured default
+        actual_redirect_uri = redirect_uri or self.redirect_uri
 
         # Create OAuth flow instance
         flow = Flow.from_client_config(
@@ -96,14 +100,15 @@ class GoogleCalendarAuth:
                     "client_secret": self.client_secret,
                     "auth_uri": "https://accounts.google.com/o/oauth2/auth",
                     "token_uri": "https://oauth2.googleapis.com/token",
-                    "redirect_uris": [self.redirect_uri]
+                    # Use dynamic redirect URI
+                    "redirect_uris": [actual_redirect_uri]
                 }
             },
             scopes=SCOPES
         )
 
-        # Set redirect URI
-        flow.redirect_uri = self.redirect_uri
+        # Set redirect URI to the actual one we want to use
+        flow.redirect_uri = actual_redirect_uri
 
         # Generate authorization URL
         state = tenant_id if tenant_id else ""
