@@ -56,18 +56,23 @@ class CalDAVClient:
                 </D:prop>
             </D:propfind>'''
             
-            # Try common CalDAV paths
+            # Try common CalDAV paths (including Mailcow/SOGo specific paths)
             potential_paths = [
-                f'/SOGo/dav/{self.username}/Calendar/',
+                f'/SOGo/dav/{self.username}/Calendar/',  # Mailcow/SOGo with email as username
                 f'/caldav/{self.username}/',
                 f'/dav/{self.username}/calendar/',
-                f'/calendar.php/calendars/{self.username}/'
+                f'/calendar.php/calendars/{self.username}/',
+                # Also try without the username for discovery
+                f'/SOGo/dav/',
+                f'/caldav/',
+                f'/dav/'
             ]
             
             calendars = []
             
             for path in potential_paths:
                 url = urljoin(self.server_url, path)
+                logger.info(f"Trying CalDAV discovery at: {url}")
                 try:
                     response = self.session.request(
                         'PROPFIND',
@@ -75,6 +80,8 @@ class CalDAVClient:
                         data=propfind_body,
                         headers={'Depth': '1'}
                     )
+                    
+                    logger.info(f"PROPFIND response for {url}: {response.status_code}")
                     
                     if response.status_code == 207:  # Multi-Status
                         # Parse WebDAV XML response
@@ -102,7 +109,7 @@ class CalDAVClient:
                             break  # Found calendars, stop trying other paths
                             
                 except Exception as e:
-                    logger.debug(f"Failed to discover calendars at {url}: {e}")
+                    logger.warning(f"Failed to discover calendars at {url}: {e}")
                     continue
             
             return calendars
@@ -270,8 +277,26 @@ class CalDAVClient:
             True if connection is successful, False otherwise
         """
         try:
+            logger.info(f"Testing CalDAV connection to {self.server_url}")
+            
+            # First try a simple OPTIONS request to test basic connectivity
+            try:
+                response = self.session.options(self.server_url)
+                logger.info(f"OPTIONS request status: {response.status_code}")
+                if response.status_code not in [200, 204, 405]:  # 405 is OK for OPTIONS
+                    logger.warning(f"Unexpected OPTIONS response: {response.status_code}")
+            except Exception as e:
+                logger.error(f"Basic connectivity test failed: {e}")
+                return False
+            
+            # Try to discover calendars
             calendars = self.discover_calendars()
-            return len(calendars) > 0
+            logger.info(f"Discovered {len(calendars)} calendars")
+            
+            # Return True if we can at least connect, even if no calendars found
+            # (user might not have calendars set up yet)
+            return True
+            
         except Exception as e:
             logger.error(f"CalDAV connection test failed: {e}")
             return False
