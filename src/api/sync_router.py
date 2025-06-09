@@ -205,6 +205,150 @@ async def list_google_calendars(
         )
 
 
+# CalDAV (Mailcow) Configuration Endpoints
+
+@router.post("/config/caldav/test-connection")
+async def test_caldav_connection(
+    connection_info: Dict[str, Any] = Body(...)
+):
+    """Test CalDAV connection to Mailcow server"""
+    try:
+        from services.caldav_client import CalDAVClient
+        
+        server_url = connection_info.get('server_url')
+        username = connection_info.get('username') 
+        password = connection_info.get('password')
+        
+        if not all([server_url, username, password]):
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Missing required fields: server_url, username, password"
+            )
+        
+        caldav_client = CalDAVClient(server_url, username, password)
+        is_connected = caldav_client.test_connection()
+        
+        if is_connected:
+            return {
+                "status": "success",
+                "message": "CalDAV connection successful"
+            }
+        else:
+            return {
+                "status": "error", 
+                "message": "CalDAV connection failed"
+            }
+            
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"CalDAV connection test failed: {str(e)}"
+        )
+
+
+@router.post("/config/caldav/calendars")
+async def list_caldav_calendars(
+    connection_info: Dict[str, Any] = Body(...)
+):
+    """List available CalDAV calendars for the authenticated user"""
+    try:
+        from services.caldav_client import CalDAVClient
+        
+        server_url = connection_info.get('server_url')
+        username = connection_info.get('username')
+        password = connection_info.get('password')
+        
+        if not all([server_url, username, password]):
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Missing required fields: server_url, username, password"
+            )
+        
+        caldav_client = CalDAVClient(server_url, username, password)
+        calendars = caldav_client.discover_calendars()
+        
+        return {
+            "calendars": calendars,
+            "total_count": len(calendars)
+        }
+        
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Failed to list CalDAV calendars: {str(e)}"
+        )
+
+
+@router.post("/config/destination/caldav")
+async def configure_caldav_destination(
+    destination_config: Dict[str, Any] = Body(...)
+):
+    """Configure CalDAV (Mailcow) as the destination calendar"""
+    try:
+        server_url = destination_config.get('server_url')
+        username = destination_config.get('username')
+        password = destination_config.get('password')
+        calendar_url = destination_config.get('calendar_url')
+        calendar_name = destination_config.get('calendar_name', 'Mailcow Calendar')
+        
+        if not all([server_url, username, password, calendar_url]):
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Missing required fields: server_url, username, password, calendar_url"
+            )
+        
+        # Test the connection first
+        from services.caldav_client import CalDAVClient
+        caldav_client = CalDAVClient(server_url, username, password)
+        
+        if not caldav_client.test_connection():
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="CalDAV connection test failed"
+            )
+        
+        # Create destination configuration
+        destination = SyncDestination(
+            id=str(uuid.uuid4()),
+            name=calendar_name,
+            provider_type="caldav",
+            calendar_id=calendar_url,
+            connection_info={
+                "server_url": server_url,
+                "username": username,
+                "password": password,
+                "calendar_url": calendar_url
+            },
+            conflict_resolution=ConflictResolution.PREFER_DESTINATION,
+            categories={}
+        )
+        
+        # Save configuration
+        controller = await get_sync_controller()
+        config = await controller.load_configuration()
+        config.destination = destination
+        await controller.save_configuration(config)
+        
+        return {
+            "status": "success",
+            "message": "CalDAV destination configured successfully",
+            "destination": {
+                "provider_type": "caldav",
+                "name": calendar_name,
+                "calendar_id": calendar_url,
+                "server_url": server_url
+            }
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to configure CalDAV destination: {str(e)}"
+        )
+
+
 @router.post("/test/end-to-end")
 async def test_end_to_end_sync(
     controller: CalendarSyncController = Depends(get_sync_controller)

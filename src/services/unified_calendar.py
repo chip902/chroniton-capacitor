@@ -7,6 +7,7 @@ from services.google_calendar import GoogleCalendarService
 from services.microsoft_calendar import MicrosoftCalendarService
 from services.apple_calendar import AppleCalendarService
 from services.exchange_calendar import ExchangeCalendarService
+from services.caldav_client import CalDAVClient
 from services.calendar_event import CalendarEvent, CalendarProvider
 
 # Set up logging
@@ -551,6 +552,32 @@ class UnifiedCalendarService:
                     )
                     created_events.append(created_event)
                     
+            elif provider == "caldav":
+                # CalDAV (Mailcow) destination
+                caldav_client = CalDAVClient(
+                    server_url=credentials.get('server_url'),
+                    username=credentials.get('username'),
+                    password=credentials.get('password')
+                )
+                
+                for event in events:
+                    # Convert CalendarEvent to dict format for CalDAV
+                    event_data = {
+                        'title': event.title,
+                        'description': event.description,
+                        'start_time': event.start_time,
+                        'end_time': event.end_time,
+                        'location': event.location
+                    }
+                    
+                    success = caldav_client.create_event(calendar_id, event_data)
+                    if success:
+                        created_events.append({
+                            'id': f"caldav-{event.id}",
+                            'title': event.title,
+                            'status': 'created'
+                        })
+                    
             else:
                 raise ValueError(f"Unsupported provider for destination: {provider}")
             
@@ -596,6 +623,33 @@ class UnifiedCalendarService:
                 )
                 return updated_event
                 
+            elif provider == "caldav":
+                # CalDAV (Mailcow) update
+                caldav_client = CalDAVClient(
+                    server_url=credentials.get('server_url'),
+                    username=credentials.get('username'),
+                    password=credentials.get('password')
+                )
+                
+                event_data = {
+                    'title': event.title,
+                    'description': event.description,
+                    'start_time': event.start_time,
+                    'end_time': event.end_time,
+                    'location': event.location
+                }
+                
+                # For CalDAV, event_id should be the full event URL
+                success = caldav_client.update_event(event_id, event_data)
+                if success:
+                    return {
+                        'id': event_id,
+                        'title': event.title,
+                        'status': 'updated'
+                    }
+                else:
+                    raise Exception("Failed to update CalDAV event")
+                
             else:
                 raise ValueError(f"Unsupported provider for destination: {provider}")
                 
@@ -630,6 +684,17 @@ class UnifiedCalendarService:
                     auth_info, calendar_id, event_id
                 )
                 return result
+                
+            elif provider == "caldav":
+                # CalDAV (Mailcow) delete
+                caldav_client = CalDAVClient(
+                    server_url=credentials.get('server_url'),
+                    username=credentials.get('username'),
+                    password=credentials.get('password')
+                )
+                
+                # For CalDAV, event_id should be the full event URL
+                return caldav_client.delete_event(event_id)
                 
             else:
                 raise ValueError(f"Unsupported provider for destination: {provider}")
