@@ -433,20 +433,57 @@ def test_parser():
         print(f"   Path: {account_info['path']}")
         print()
 
-    # Test parsing events from your most active accounts
-    for dir_num in ['4', '7']:  # chip@prj-3.com and andrew@chip-hosting.com
-        if dir_num in accounts:
-            print(f"🎯 PARSING EVENTS FROM DIRECTORY {dir_num}...")
-            events = parser.get_events_for_account(accounts[dir_num]['path'])
-            print(f"Found {len(events)} events")
+    # Find and parse work-related accounts (containing 'andrew' or 'chepurn' in email)
+    work_accounts = []
+    for dir_num, account_info in accounts.items():
+        email = account_info.get('email', '').lower()
+        if 'andrew' in email or 'chepurn' in email or 'chip' in email:
+            work_accounts.append((dir_num, account_info))
+
+    if not work_accounts:
+        print("⚠️ No work accounts found. Available accounts:")
+        for dir_num, account_info in accounts.items():
+            print(
+                f"  - {dir_num}: {account_info.get('email', 'No email')} ({account_info.get('event_count', 0)} events)")
+    else:
+        print(f"🔍 Found {len(work_accounts)} work-related accounts")
+
+    # Parse events from work accounts
+    for dir_num, account_info in work_accounts:
+        print(
+            f"\n🎯 PARSING EVENTS FROM WORK ACCOUNT: {account_info.get('email')} (Directory {dir_num})")
+        print("=" * 70)
+
+        try:
+            events = parser.get_events_for_account(account_info['path'])
+            print(f"✅ Found {len(events)} events")
 
             # Show first few events
             for i, event in enumerate(events[:3]):
-                print(f"  {i+1}. {event['title']}")
-                print(f"     Start: {event['start_time']}")
-                print(f"     Organizer: {event['organizer']}")
-                print(f"     Participants: {len(event['participants'])}")
-                print()
+                print(f"\n  {i+1}. {event.get('title', 'No title')}")
+                print(f"     Start: {event.get('start_time', 'N/A')}")
+                print(f"     End: {event.get('end_time', 'N/A')}")
+                print(f"     Organizer: {event.get('organizer', 'N/A')}")
+                print(
+                    f"     Participants: {len(event.get('participants', []))}")
+
+                # Show first 3 participants if any
+                participants = event.get('participants', [])[:3]
+                if participants:
+                    print("     First few participants:")
+                    for p in participants:
+                        print(
+                            f"       - {p.get('name', 'Unknown')} <{p.get('email', 'no-email')}>")
+
+                if len(event.get('participants', [])) > 3:
+                    print(
+                        f"     ... and {len(event['participants']) - 3} more")
+
+        except Exception as e:
+            print(f"❌ Error parsing events for account {dir_num}: {str(e)}")
+            import traceback
+            traceback.print_exc()
+            continue
 
 
 if __name__ == "__main__":
