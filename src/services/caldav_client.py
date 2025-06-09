@@ -37,6 +37,14 @@ class CalDAVClient:
             'User-Agent': 'Chroniton-Capacitor/1.0',
             'Content-Type': 'application/xml; charset=utf-8'
         })
+        
+        # Disable SSL verification for self-signed certificates
+        # This is common with self-hosted Mailcow instances
+        self.session.verify = False
+        
+        # Suppress SSL warnings when verification is disabled
+        import urllib3
+        urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
     def discover_calendars(self) -> List[Dict[str, str]]:
         """
