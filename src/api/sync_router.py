@@ -281,7 +281,8 @@ async def list_caldav_calendars(
 
 @router.post("/config/destination/caldav")
 async def configure_caldav_destination(
-    destination_config: Dict[str, Any] = Body(...)
+    destination_config: Dict[str, Any] = Body(...),
+    controller: CalendarSyncController = Depends(get_sync_controller)
 ):
     """Configure CalDAV (Mailcow) as the destination calendar"""
     try:
@@ -333,7 +334,6 @@ async def configure_caldav_destination(
         
         # Save configuration
         try:
-            controller = await get_sync_controller()
             config = await controller.load_configuration()
             config.destination = destination
             await controller.save_configuration(config)
