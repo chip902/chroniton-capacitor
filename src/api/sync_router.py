@@ -308,26 +308,42 @@ async def configure_caldav_destination(
             )
         
         # Create destination configuration
-        destination = SyncDestination(
-            id=str(uuid.uuid4()),
-            name=calendar_name,
-            provider_type="caldav",
-            calendar_id=calendar_url,
-            connection_info={
-                "server_url": server_url,
-                "username": username,
-                "password": password,
-                "calendar_url": calendar_url
-            },
-            conflict_resolution=ConflictResolution.PREFER_DESTINATION,
-            categories={}
-        )
+        try:
+            destination = SyncDestination(
+                id=str(uuid.uuid4()),
+                name=calendar_name,
+                provider_type="caldav",
+                calendar_id=calendar_url,
+                connection_info={
+                    "server_url": server_url,
+                    "username": username,
+                    "password": password,
+                    "calendar_url": calendar_url
+                },
+                conflict_resolution=ConflictResolution.PREFER_DESTINATION,
+                categories={}
+            )
+            logger.info(f"Created CalDAV destination configuration: {destination.name}")
+        except Exception as e:
+            logger.error(f"Error creating CalDAV destination: {e}")
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail=f"Failed to create destination configuration: {str(e)}"
+            )
         
         # Save configuration
-        controller = await get_sync_controller()
-        config = await controller.load_configuration()
-        config.destination = destination
-        await controller.save_configuration(config)
+        try:
+            controller = await get_sync_controller()
+            config = await controller.load_configuration()
+            config.destination = destination
+            await controller.save_configuration(config)
+            logger.info(f"Saved CalDAV destination configuration")
+        except Exception as e:
+            logger.error(f"Error saving CalDAV configuration: {e}")
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail=f"Failed to save configuration: {str(e)}"
+            )
         
         return {
             "status": "success",
