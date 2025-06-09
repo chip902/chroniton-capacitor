@@ -9,10 +9,10 @@ from googleapiclient.errors import HttpError
 
 from utils.config import settings
 
-# OAuth scope for Google Calendar API
+# OAuth scope for Google Calendar API (including write permissions for sync)
 SCOPES = [
-    'https://www.googleapis.com/auth/calendar.readonly',
-    'https://www.googleapis.com/auth/calendar.events.readonly'
+    'https://www.googleapis.com/auth/calendar',
+    'https://www.googleapis.com/auth/calendar.events'
 ]
 
 # Dummy calendar service for when credentials aren't available
@@ -209,3 +209,12 @@ class GoogleCalendarAuth:
                 status_code=status.HTTP_401_UNAUTHORIZED,
                 detail=f"Failed to authenticate with Google Calendar: {str(e)}"
             )
+
+    def get_authorization_url(self, tenant_id: Optional[str] = None, redirect_uri: Optional[str] = None) -> str:
+        """Convenience method to get authorization URL (compatible with sync router)"""
+        result = self.create_auth_url(tenant_id, redirect_uri)
+        return result["auth_url"]
+
+    async def exchange_code_for_tokens(self, code: str, redirect_uri: Optional[str] = None) -> Dict[str, str]:
+        """Convenience method to exchange code for tokens (compatible with sync router)"""
+        return await self.exchange_code(code, redirect_uri)

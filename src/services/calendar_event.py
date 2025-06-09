@@ -318,3 +318,85 @@ class CalendarEvent(BaseModel):
             updated_at=datetime.fromisoformat(event["lastModifiedDateTime"].replace('Z', '+00:00')) if "lastModifiedDateTime" in event else None,
             original_data=event
         )
+        
+    @classmethod
+    def from_outlook_mac(cls, event: Dict[str, Any], calendar_id: str, calendar_name: Optional[str] = None) -> "CalendarEvent":
+        """
+        Create a normalized CalendarEvent from Outlook Mac .olk15Event data
+        """
+        # Parse start and end times from ISO format
+        start_time_str = event.get("start_time", "")
+        end_time_str = event.get("end_time", "")
+        
+        try:
+            start_dt = datetime.fromisoformat(start_time_str.replace('Z', '+00:00'))
+        except:
+            start_dt = datetime.utcnow()
+            
+        try:
+            end_dt = datetime.fromisoformat(end_time_str.replace('Z', '+00:00'))
+        except:
+            end_dt = start_dt
+        
+        # Extract organizer
+        organizer = None
+        organizer_data = event.get("organizer")
+        if organizer_data and isinstance(organizer_data, dict):
+            organizer = EventParticipant(
+                email=organizer_data.get("email"),
+                name=organizer_data.get("name"),
+                response_status="accepted"
+            )
+        
+        # Extract participants
+        participants = []
+        participants_data = event.get("participants", [])
+        if participants_data:
+            for participant in participants_data:
+                if isinstance(participant, dict):
+                    participants.append(EventParticipant(
+                        email=participant.get("email"),
+                        name=participant.get("name"),
+                        response_status=participant.get("status", "needs_action")
+                    ))
+        
+        # Parse created/updated timestamps
+        created_at = None
+        updated_at = None
+        
+        try:
+            if event.get("created_at"):
+                created_at = datetime.fromisoformat(event["created_at"].replace('Z', '+00:00'))
+        except:
+            pass
+            
+        try:
+            if event.get("modified_at"):
+                updated_at = datetime.fromisoformat(event["modified_at"].replace('Z', '+00:00'))
+        except:
+            pass
+        
+        # Create the normalized event
+        return cls(
+            id=f"outlook_mac_{event.get('id', '')}",
+            provider=CalendarProvider.EXCHANGE,  # Use EXCHANGE as closest match for Outlook Mac
+            provider_id=event.get("id", ""),
+            title=event.get("title", "Untitled Event"),
+            description=event.get("description", ""),
+            location=event.get("location", ""),
+            start_time=start_dt,
+            end_time=end_dt,
+            all_day=event.get("all_day", False),
+            organizer=organizer,
+            participants=participants,
+            recurring=event.get("recurring", False),
+            recurrence_pattern=event.get("recurrence_pattern"),
+            calendar_id=calendar_id,
+            calendar_name=calendar_name or event.get("calendar_name"),
+            link=None,
+            private=event.get("private", False),
+            status=event.get("status", "confirmed"),
+            created_at=created_at,
+            updated_at=updated_at,
+            original_data=event
+        )

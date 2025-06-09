@@ -511,3 +511,129 @@ class UnifiedCalendarService:
         except Exception as e:
             logger.error(f"Error deleting calendar for {provider}: {e}")
             raise
+
+    async def create_events_in_destination(
+        self,
+        provider: str,
+        calendar_id: str,
+        credentials: Dict[str, Any],
+        events: List[CalendarEvent]
+    ) -> List[Dict[str, Any]]:
+        """Create multiple events in a destination calendar"""
+        try:
+            created_events = []
+            
+            if provider == CalendarProvider.GOOGLE.value:
+                for event in events:
+                    # Convert to Google format
+                    google_event_data = self.google_service.convert_calendar_event_to_google_format(event)
+                    
+                    # Create the event
+                    created_event = await self.google_service.create_event(
+                        credentials, calendar_id, google_event_data
+                    )
+                    created_events.append(created_event)
+                    
+            elif provider == CalendarProvider.MICROSOFT.value:
+                for event in events:
+                    # Convert to Microsoft format and create
+                    created_event = await self.microsoft_service.create_event(
+                        credentials, calendar_id, event
+                    )
+                    created_events.append(created_event)
+                    
+            elif provider == CalendarProvider.EXCHANGE.value:
+                auth_info = await self.exchange_service.authenticate(credentials)
+                for event in events:
+                    # Convert to Exchange format and create
+                    created_event = await self.exchange_service.create_event(
+                        auth_info, calendar_id, event
+                    )
+                    created_events.append(created_event)
+                    
+            else:
+                raise ValueError(f"Unsupported provider for destination: {provider}")
+            
+            logger.info(f"Created {len(created_events)} events in {provider} calendar {calendar_id}")
+            return created_events
+            
+        except Exception as e:
+            logger.error(f"Error creating events in {provider} destination: {e}")
+            raise
+
+    async def update_event_in_destination(
+        self,
+        provider: str,
+        calendar_id: str,
+        event_id: str,
+        credentials: Dict[str, Any],
+        event: CalendarEvent
+    ) -> Dict[str, Any]:
+        """Update an event in a destination calendar"""
+        try:
+            if provider == CalendarProvider.GOOGLE.value:
+                # Convert to Google format
+                google_event_data = self.google_service.convert_calendar_event_to_google_format(event)
+                
+                # Update the event
+                updated_event = await self.google_service.update_event(
+                    credentials, calendar_id, event_id, google_event_data
+                )
+                return updated_event
+                
+            elif provider == CalendarProvider.MICROSOFT.value:
+                # Update Microsoft event
+                updated_event = await self.microsoft_service.update_event(
+                    credentials, calendar_id, event_id, event
+                )
+                return updated_event
+                
+            elif provider == CalendarProvider.EXCHANGE.value:
+                auth_info = await self.exchange_service.authenticate(credentials)
+                # Update Exchange event
+                updated_event = await self.exchange_service.update_event(
+                    auth_info, calendar_id, event_id, event
+                )
+                return updated_event
+                
+            else:
+                raise ValueError(f"Unsupported provider for destination: {provider}")
+                
+        except Exception as e:
+            logger.error(f"Error updating event in {provider} destination: {e}")
+            raise
+
+    async def delete_event_from_destination(
+        self,
+        provider: str,
+        calendar_id: str,
+        event_id: str,
+        credentials: Dict[str, Any]
+    ) -> bool:
+        """Delete an event from a destination calendar"""
+        try:
+            if provider == CalendarProvider.GOOGLE.value:
+                result = await self.google_service.delete_event(
+                    credentials, calendar_id, event_id
+                )
+                return result
+                
+            elif provider == CalendarProvider.MICROSOFT.value:
+                result = await self.microsoft_service.delete_event(
+                    credentials, calendar_id, event_id
+                )
+                return result
+                
+            elif provider == CalendarProvider.EXCHANGE.value:
+                auth_info = await self.exchange_service.authenticate(credentials)
+                result = await self.exchange_service.delete_event(
+                    auth_info, calendar_id, event_id
+                )
+                return result
+                
+            else:
+                raise ValueError(f"Unsupported provider for destination: {provider}")
+                
+        except Exception as e:
+            logger.error(f"Error deleting event from {provider} destination: {e}")
+            raise

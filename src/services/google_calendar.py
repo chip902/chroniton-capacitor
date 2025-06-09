@@ -156,3 +156,209 @@ class GoogleCalendarService:
         except Exception as e:
             logger.error(f"Unexpected error getting Google calendar events: {e}")
             raise
+
+    @retry(
+        stop=stop_after_attempt(3),
+        wait=wait_exponential(multiplier=1, min=4, max=10),
+        retry=retry_if_exception_type(HttpError),
+        reraise=True
+    )
+    async def create_event(
+        self, 
+        token_info: Dict[str, str], 
+        calendar_id: str,
+        event_data: Dict[str, Any]
+    ) -> Dict[str, Any]:
+        """
+        Create a new event in Google Calendar
+        
+        Args:
+            token_info: Google OAuth tokens
+            calendar_id: ID of the calendar to create event in
+            event_data: Event data in Google Calendar format
+            
+        Returns:
+            Created event data
+        """
+        try:
+            # Get Google Calendar service
+            service = await self.auth.get_calendar_service(token_info)
+            
+            # Create the event
+            created_event = service.events().insert(
+                calendarId=calendar_id, 
+                body=event_data
+            ).execute()
+            
+            logger.info(f"Created event {created_event.get('id')} in calendar {calendar_id}")
+            return created_event
+            
+        except HttpError as error:
+            logger.error(f"Error creating Google calendar event: {error}")
+            raise
+        except Exception as e:
+            logger.error(f"Unexpected error creating Google calendar event: {e}")
+            raise
+
+    @retry(
+        stop=stop_after_attempt(3),
+        wait=wait_exponential(multiplier=1, min=4, max=10),
+        retry=retry_if_exception_type(HttpError),
+        reraise=True
+    )
+    async def update_event(
+        self, 
+        token_info: Dict[str, str], 
+        calendar_id: str,
+        event_id: str,
+        event_data: Dict[str, Any]
+    ) -> Dict[str, Any]:
+        """
+        Update an existing event in Google Calendar
+        
+        Args:
+            token_info: Google OAuth tokens
+            calendar_id: ID of the calendar containing the event
+            event_id: ID of the event to update
+            event_data: Updated event data in Google Calendar format
+            
+        Returns:
+            Updated event data
+        """
+        try:
+            # Get Google Calendar service
+            service = await self.auth.get_calendar_service(token_info)
+            
+            # Update the event
+            updated_event = service.events().update(
+                calendarId=calendar_id,
+                eventId=event_id,
+                body=event_data
+            ).execute()
+            
+            logger.info(f"Updated event {event_id} in calendar {calendar_id}")
+            return updated_event
+            
+        except HttpError as error:
+            logger.error(f"Error updating Google calendar event: {error}")
+            raise
+        except Exception as e:
+            logger.error(f"Unexpected error updating Google calendar event: {e}")
+            raise
+
+    @retry(
+        stop=stop_after_attempt(3),
+        wait=wait_exponential(multiplier=1, min=4, max=10),
+        retry=retry_if_exception_type(HttpError),
+        reraise=True
+    )
+    async def delete_event(
+        self, 
+        token_info: Dict[str, str], 
+        calendar_id: str,
+        event_id: str
+    ) -> bool:
+        """
+        Delete an event from Google Calendar
+        
+        Args:
+            token_info: Google OAuth tokens
+            calendar_id: ID of the calendar containing the event
+            event_id: ID of the event to delete
+            
+        Returns:
+            True if successful
+        """
+        try:
+            # Get Google Calendar service
+            service = await self.auth.get_calendar_service(token_info)
+            
+            # Delete the event
+            service.events().delete(
+                calendarId=calendar_id,
+                eventId=event_id
+            ).execute()
+            
+            logger.info(f"Deleted event {event_id} from calendar {calendar_id}")
+            return True
+            
+        except HttpError as error:
+            if error.status_code == 404:
+                logger.warning(f"Event {event_id} not found, considering it deleted")
+                return True
+            logger.error(f"Error deleting Google calendar event: {error}")
+            raise
+        except Exception as e:
+            logger.error(f"Unexpected error deleting Google calendar event: {e}")
+            raise
+
+    def convert_calendar_event_to_google_format(self, calendar_event: CalendarEvent) -> Dict[str, Any]:
+        """
+        Convert a CalendarEvent to Google Calendar API format
+        
+        Args:
+            calendar_event: Normalized calendar event
+            
+        Returns:
+            Event data in Google Calendar format
+        """
+        google_event = {
+            'summary': calendar_event.title,
+            'description': calendar_event.description or '',
+            'location': calendar_event.location or '',
+            'start': {},
+            'end': {},
+            'attendees': [],
+            'status': 'confirmed'
+        }
+        
+        # Handle start time
+        if calendar_event.all_day:
+            google_event['start']['date'] = calendar_event.start_time.date().isoformat()
+            google_event['end']['date'] = calendar_event.end_time.date().isoformat()
+        else:
+            google_event['start']['dateTime'] = calendar_event.start_time.isoformat()
+            google_event['end']['dateTime'] = calendar_event.end_time.isoformat()
+            if hasattr(calendar_event, 'timezone') and calendar_event.timezone:
+                google_event['start']['timeZone'] = calendar_event.timezone
+                google_event['end']['timeZone'] = calendar_event.timezone
+        
+        # Handle attendees
+        if calendar_event.participants:
+            for participant in calendar_event.participants:
+                if isinstance(participant, dict) and participant.get('email'):
+                    attendee = {
+                        'email': participant['email'],
+                        'displayName': participant.get('name', ''),
+                        'responseStatus': participant.get('status', 'needsAction')
+                    }
+                    google_event['attendees'].append(attendee)
+        
+        # Handle organizer
+        if calendar_event.organizer and isinstance(calendar_event.organizer, dict):
+            if calendar_event.organizer.get('email'):
+                google_event['organizer'] = {
+                    'email': calendar_event.organizer['email'],
+                    'displayName': calendar_event.organizer.get('name', '')
+                }
+        
+        # Handle recurring events
+        if calendar_event.recurring and hasattr(calendar_event, 'recurrence_pattern'):
+            if calendar_event.recurrence_pattern:
+                google_event['recurrence'] = [f"RRULE:{calendar_event.recurrence_pattern}"]
+        
+        # Handle privacy
+        if hasattr(calendar_event, 'private') and calendar_event.private:
+            google_event['visibility'] = 'private'
+        
+        # Add source metadata
+        google_event['extendedProperties'] = {
+            'private': {
+                'source_provider': calendar_event.provider.value if hasattr(calendar_event.provider, 'value') else str(calendar_event.provider),
+                'source_calendar_id': calendar_event.calendar_id or '',
+                'source_event_id': calendar_event.provider_id or calendar_event.id,
+                'sync_timestamp': datetime.utcnow().isoformat()
+            }
+        }
+        
+        return google_event

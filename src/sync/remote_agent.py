@@ -251,6 +251,8 @@ class RemoteCalendarAgent:
                     events = await self.collect_ical_events(source)
                 elif source_type == "outlook":
                     events = await self.collect_outlook_events(source)
+                elif source_type == "outlook_mac":
+                    events = await self._collect_outlook_mac_events(source)
                 elif source_type == "custom":
                     events = await self.collect_custom_events(source)
                 else:
@@ -458,11 +460,10 @@ class RemoteCalendarAgent:
             return []
 
     async def _collect_outlook_mac_events(self, source: Dict[str, Any]) -> List[Dict[str, Any]]:
-        """Collect events from Outlook on Mac using SQLite database"""
+        """Collect events from Outlook on Mac using .olk15Event files"""
         try:
-            import sqlite3
-            from datetime import datetime, timedelta
             import os
+            from olk15_parser import OLK15EventParser
 
             logger.info(
                 f"Collecting events from Outlook calendar (Mac): {source.get('name')}")
@@ -473,162 +474,75 @@ class RemoteCalendarAgent:
                     f"Skipping disabled calendar: {source.get('name')}")
                 return []
 
-            # Find the Outlook database
-            db_path = None
-            search_paths = [
-                os.path.expanduser(
-                    "~/Library/Group Containers/UBF8T346G9.Office/Outlook/Outlook 15 Profiles/Main Profile/Data/"),
-                os.path.expanduser(
-                    "~/Library/Group Containers/UBF8T346G9.Office/Outlook/"),
-                os.path.expanduser(
-                    "~/Library/Containers/com.microsoft.Outlook/Data/Library/Application Support/Microsoft/Outlook/"),
-                os.path.expanduser(
-                    "~/Library/Group Containers/UBF8T346G9.Office/Outlook/Outlook 15 Profiles/Main Profile/Data/")
-            ]
-
-            # Add additional search paths for different Outlook versions
-            for version in ['16', '15', '']:
-                path = os.path.expanduser(
-                    f"~/Library/Group Containers/UBF8T346G9.Office/Outlook/Outlook {version} Profiles/Main Profile/Data/")
-                if path not in search_paths:
-                    search_paths.append(path)
-
-            for path in search_paths:
-                if os.path.exists(path):
-                    logger.debug(f"Searching for database in: {path}")
-                    for root, _, files in os.walk(path):
-                        for file in files:
-                            if file.endswith(('.sqlite', '.sqlitedb', '.db')) and 'calendar' in file.lower():
-                                db_path = os.path.join(root, file)
-                                logger.info(
-                                    f"Found potential database at: {db_path}")
-                                break
-                        if db_path:
-                            break
-                    if db_path:
-                        break
-
-            if not db_path:
-                logger.error(
-                    "Could not find Outlook for Mac database in any of the expected locations")
-                logger.info("Searched in the following locations:")
-                for path in search_paths:
-                    logger.info(f"- {path}")
+            # Find the Outlook Data directory
+            outlook_data_dir = os.path.expanduser(
+                "~/Library/Group Containers/UBF8T346G9.Office/Outlook/Outlook 15 Profiles/Main Profile/Data")
+            
+            if not os.path.exists(outlook_data_dir):
+                logger.error(f"Outlook data directory not found: {outlook_data_dir}")
                 return []
 
-            logger.info(f"Using Outlook database at: {db_path}")
-
-            # Connect to the database
-            conn = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
-            cursor = conn.cursor()
-
-            # Get calendar ID from source config
-            calendar_id = source.get('id')
-            if not calendar_id:
-                logger.error(
-                    "No calendar ID specified in source configuration")
-                return []
-
-            # Verify the calendar exists and get its name
-            cursor.execute("""
-                SELECT f.Folder_Name, a.Account_EmailAddress
-                FROM Folders f
-                LEFT JOIN AccountsMail a ON f.Record_AccountUID = a.Record_RecordID
-                WHERE f.Record_RecordID = ? AND f.Folder_FolderClass = 2
-            """, (calendar_id,))
-
-            result = cursor.fetchone()
-            if not result:
-                logger.error(
-                    f"Calendar with ID {calendar_id} not found in Outlook database")
-                return []
-
-            calendar_name, account_email = result
-            logger.info(
-                f"Found calendar: {calendar_name} (Account: {account_email or 'Unknown'})")
-
-            # Get events for the specified calendar
-            start_date = (datetime.now() - timedelta(days=30)
-                          ).strftime('%Y-%m-%d')
-            end_date = (datetime.now() + timedelta(days=30)
-                        ).strftime('%Y-%m-%d')
-
-            cursor.execute("""
-                SELECT 
-                    Record_RecordID, 
-                    Record_Subject, 
-                    Record_Location, 
-                    Record_StartDate, 
-                    Record_EndDate,
-                    Record_AllDayEvent,
-                    Record_IsRecurring,
-                    Record_LastModifiedTime,
-                    Record_CreationTime
-                FROM CalendarEvents
-                WHERE Record_FolderID = ?
-                AND Record_StartDate >= ?
-                AND Record_EndDate <= ?
-                ORDER BY Record_StartDate
-            """, (calendar_id, start_date, end_date))
-
-            events = []
-            for row in cursor.fetchall():
+            # Initialize the OLK15 parser
+            parser = OLK15EventParser(outlook_data_dir)
+            
+            # Check if we have a specific account directory to target
+            account_email = source.get('account_email') or source.get('name', '')
+            
+            # Get all account directories
+            accounts = parser.get_account_directories()
+            logger.info(f"Found {len(accounts)} account directories")
+            
+            # If we have a specific account email, try to find matching directory
+            target_accounts = []
+            if '@' in account_email:
+                for dir_num, account_info in accounts.items():
+                    if account_info['email'] and account_email.lower() in account_info['email'].lower():
+                        target_accounts.append((dir_num, account_info))
+                        logger.info(f"Found matching account directory {dir_num} for {account_email}")
+            
+            # If no specific match or no email specified, use all enabled accounts
+            if not target_accounts:
+                target_accounts = [(dir_num, account_info) for dir_num, account_info in accounts.items()]
+                logger.info(f"No specific account match, using all {len(target_accounts)} accounts")
+            
+            # Collect events from target accounts
+            all_events = []
+            for dir_num, account_info in target_accounts:
                 try:
-                    event_id, subject, location, start_date, end_date, all_day, is_recurring, modified, created = row
-
-                    # Convert dates from Mac timestamp (seconds since 2001) to ISO format
-                    def convert_mac_timestamp(timestamp):
-                        if not timestamp:
-                            return None
-                        try:
-                            # Mac timestamp is seconds since 2001-01-01
-                            dt = datetime(2001, 1, 1) + \
-                                timedelta(seconds=timestamp)
-                            return dt.isoformat()
-                        except Exception as e:
-                            logger.error(
-                                f"Error converting timestamp {timestamp}: {e}")
-                            return None
-
-                    event = {
-                        "id": str(event_id),
-                        "title": subject or "(No Title)",
-                        "description": "",  # Description is in a different table
-                        "start": convert_mac_timestamp(start_date) or "",
-                        "end": convert_mac_timestamp(end_date) or "",
-                        "location": location or "",
-                        "all_day": bool(all_day),
-                        "recurring": bool(is_recurring),
-                        "source": "outlook_mac",
-                        "source_id": str(event_id),
-                        "calendar_id": str(calendar_id),
-                        "calendar_name": calendar_name,
-                        "account_email": account_email or "",
-                        "status": "confirmed",
-                        "participants": [],
-                        "created_at": convert_mac_timestamp(created),
-                        "updated_at": convert_mac_timestamp(modified)
-                    }
-                    events.append(event)
+                    logger.info(f"Collecting events from account directory {dir_num}: {account_info['email']}")
+                    
+                    # Get events for this account
+                    account_events = parser.get_events_for_account(account_info['path'])
+                    
+                    # Add source metadata to each event
+                    for event in account_events:
+                        event.update({
+                            'source': 'outlook_mac',
+                            'calendar_id': source.get('id', f'outlook-mac-{dir_num}'),
+                            'calendar_name': source.get('name', f"Calendar ({account_info['email']})"),
+                            'account_email': account_info['email'] or '',
+                            'account_directory': dir_num
+                        })
+                    
+                    all_events.extend(account_events)
+                    logger.info(f"Collected {len(account_events)} events from directory {dir_num}")
+                    
                 except Exception as e:
-                    logger.error(f"Error processing event: {e}")
+                    logger.error(f"Error collecting events from directory {dir_num}: {e}")
                     continue
 
-            logger.info(
-                f"Collected {len(events)} events from Outlook calendar: {calendar_name}")
-            return events
+            logger.info(f"Total collected {len(all_events)} events from {len(target_accounts)} account directories")
+            return all_events
 
+        except ImportError as e:
+            logger.error(f"Could not import OLK15EventParser: {e}")
+            logger.error("Make sure olk15_parser.py is in the same directory as this script")
+            return []
         except Exception as e:
-            logger.error(f"Error collecting Outlook for Mac events: {e}")
+            logger.error(f"Error collecting Outlook for Mac events using OLK15 parser: {e}")
             import traceback
             logger.error(traceback.format_exc())
             return []
-        finally:
-            try:
-                if 'conn' in locals():
-                    conn.close()
-            except Exception as e:
-                logger.error(f"Error closing database connection: {e}")
 
     async def collect_outlook_events(self, source: Dict[str, Any]) -> List[Dict[str, Any]]:
         """Collect events from Outlook, handling both Windows and Mac platforms"""

@@ -232,7 +232,19 @@ class CalendarSyncController:
                     logger.error(error_msg)
                     results["errors"].append(error_msg)
 
-            # Update completion time
+            # Also process agent events from heartbeats
+            try:
+                agent_result = await self.sync_agent_events()
+                results["sources_synced"] += agent_result.get("agents_processed", 0)
+                results["events_synced"] += agent_result.get("events_synced", 0)
+                if agent_result.get("errors"):
+                    results["errors"].extend(agent_result["errors"])
+            except Exception as e:
+                error_msg = f"Error syncing agent events: {str(e)}"
+                logger.error(error_msg)
+                results["errors"].append(error_msg)
+
+            # Update completion time after all processing
             results["end_time"] = datetime.utcnow().isoformat()
 
             # Store sync results
@@ -980,3 +992,91 @@ class CalendarSyncController:
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail=f"Failed to mark update as processed: {str(e)}"
             )
+
+    async def sync_agent_events(self) -> Dict[str, Any]:
+        """Process agent events from heartbeats and sync to destination"""
+        try:
+            # Load configuration to get destination
+            config = await self.load_configuration()
+            
+            if not config.destination:
+                logger.warning("No destination calendar configured for agent events")
+                return {
+                    "agents_processed": 0,
+                    "events_synced": 0,
+                    "errors": ["No destination calendar configured"]
+                }
+
+            # Import the stored_events from the router module
+            from api.sync_router import stored_events
+
+            results = {
+                "agents_processed": 0,
+                "events_synced": 0,
+                "errors": []
+            }
+
+            # Process events from each agent
+            for agent_id, events_data in stored_events.items():
+                if not events_data:
+                    continue
+
+                try:
+                    results["agents_processed"] += 1
+                    
+                    # Convert agent events to CalendarEvent objects
+                    calendar_events = []
+                    for event_data in events_data:
+                        try:
+                            # Use from_outlook_mac since these are from OLK15EventParser
+                            calendar_event = CalendarEvent.from_outlook_mac(
+                                event_data, 
+                                calendar_id=event_data.get("calendar_name", f"agent_{agent_id}"),
+                                calendar_name=event_data.get("calendar_name")
+                            )
+                            calendar_events.append(calendar_event)
+                        except Exception as e:
+                            error_msg = f"Error converting event from agent {agent_id}: {str(e)}"
+                            logger.error(error_msg)
+                            results["errors"].append(error_msg)
+                            continue
+
+                    if calendar_events:
+                        # Create events in destination calendar
+                        try:
+                            created_events = await self.unified_service.create_events_in_destination(
+                                provider=config.destination.provider_type,
+                                calendar_id=config.destination.calendar_id,
+                                credentials=config.destination.credentials,
+                                events=calendar_events
+                            )
+                            
+                            synced_count = len(created_events)
+                            results["events_synced"] += synced_count
+                            
+                            logger.info(f"Synced {synced_count} events from agent {agent_id} to destination")
+                            
+                        except Exception as e:
+                            error_msg = f"Error creating events in destination from agent {agent_id}: {str(e)}"
+                            logger.error(error_msg)
+                            results["errors"].append(error_msg)
+
+                except Exception as e:
+                    error_msg = f"Error processing events from agent {agent_id}: {str(e)}"
+                    logger.error(error_msg)
+                    results["errors"].append(error_msg)
+
+            # Clear processed events after successful sync
+            if results["events_synced"] > 0:
+                stored_events.clear()
+                logger.info("Cleared processed agent events from memory")
+
+            return results
+
+        except Exception as e:
+            logger.error(f"Error in sync_agent_events: {str(e)}")
+            return {
+                "agents_processed": 0,
+                "events_synced": 0,
+                "errors": [f"Failed to sync agent events: {str(e)}"]
+            }

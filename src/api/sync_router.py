@@ -4,10 +4,10 @@ Synchronization API Router
 This module defines the API endpoints for calendar synchronization.
 """
 
-from fastapi import APIRouter, Depends, HTTPException, status, Body
-from typing import List, Dict, Any, Optional
+from fastapi import APIRouter, Depends, HTTPException, status, Body, Query
+from typing import List, Dict, Any, Optional, Union
 import uuid
-from datetime import datetime
+from datetime import datetime, timedelta
 
 from sync.architecture import (
     SyncConfiguration, SyncSource, SyncDestination, SyncAgentConfig,
@@ -71,6 +71,183 @@ async def configure_destination(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=f"Failed to configure destination: {str(e)}"
         )
+
+
+@router.post("/config/destination/google")
+async def configure_google_destination(
+    data: Dict[str, Any] = Body(...),
+    controller: CalendarSyncController = Depends(get_sync_controller)
+):
+    """Configure Google Calendar as the destination with simplified setup"""
+    try:
+        # Extract required parameters
+        calendar_id = data.get("calendar_id", "primary")  # Default to primary calendar
+        credentials = data.get("credentials")
+        
+        if not credentials:
+            raise ValueError("Google Calendar credentials are required")
+        
+        # Create the Google destination configuration
+        destination = SyncDestination(
+            id="google_destination",
+            name="Google Calendar Destination",
+            provider_type="google",
+            connection_info={
+                "api_base_url": "https://www.googleapis.com/calendar/v3",
+                "scopes": [
+                    "https://www.googleapis.com/auth/calendar",
+                    "https://www.googleapis.com/auth/calendar.events"
+                ]
+            },
+            credentials=credentials,
+            calendar_id=calendar_id,
+            conflict_resolution=ConflictResolution.LATEST_WINS,
+            color_management="separate_calendar"  # Create separate calendars for each source
+        )
+        
+        # Configure the destination
+        result = await controller.configure_destination(destination)
+        
+        return {
+            "status": "success",
+            "message": "Google Calendar destination configured successfully",
+            "destination": result.dict(),
+            "calendar_id": calendar_id
+        }
+        
+    except ValueError as e:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(e)
+        )
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to configure Google destination: {str(e)}"
+        )
+
+
+@router.get("/config/google/auth-url")
+async def get_google_auth_url():
+    """Get Google OAuth2 authorization URL for setting up calendar access"""
+    try:
+        from auth.google_auth import GoogleCalendarAuth
+        
+        auth_service = GoogleCalendarAuth()
+        auth_url = auth_service.get_authorization_url()
+        
+        return {
+            "auth_url": auth_url,
+            "instructions": "Visit this URL to authorize calendar access, then return with the authorization code"
+        }
+        
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to generate auth URL: {str(e)}"
+        )
+
+
+@router.post("/config/google/exchange-code")
+async def exchange_google_auth_code(
+    data: Dict[str, Any] = Body(...)
+):
+    """Exchange Google authorization code for access tokens"""
+    try:
+        from auth.google_auth import GoogleCalendarAuth
+        
+        auth_code = data.get("code")
+        if not auth_code:
+            raise ValueError("Authorization code is required")
+            
+        auth_service = GoogleCalendarAuth()
+        credentials = await auth_service.exchange_code_for_tokens(auth_code)
+        
+        return {
+            "status": "success",
+            "message": "Authorization successful",
+            "credentials": credentials,
+            "next_step": "Use these credentials to configure Google Calendar destination"
+        }
+        
+    except ValueError as e:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(e)
+        )
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to exchange authorization code: {str(e)}"
+        )
+
+
+@router.post("/config/google/calendars")
+async def list_google_calendars(
+    token_info: Dict[str, Any] = Body(...)
+):
+    """List available Google calendars for the authenticated user"""
+    try:
+        from services.google_calendar import GoogleCalendarService
+        
+        google_service = GoogleCalendarService()
+        calendars = await google_service.list_calendars(token_info)
+        
+        return {
+            "calendars": calendars,
+            "total_count": len(calendars)
+        }
+        
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Failed to list calendars: {str(e)}"
+        )
+
+
+@router.post("/test/end-to-end")
+async def test_end_to_end_sync(
+    controller: CalendarSyncController = Depends(get_sync_controller)
+):
+    """Test the complete sync flow from agent events to destination calendar"""
+    try:
+        # Check if we have stored events from agents
+        if not stored_events:
+            return {
+                "status": "no_data",
+                "message": "No agent events available for testing. Agent needs to send heartbeat with events first.",
+                "agent_count": len(agent_status),
+                "stored_events_count": 0
+            }
+        
+        # Check if destination is configured
+        config = await controller.load_configuration()
+        if not config.destination:
+            return {
+                "status": "no_destination",
+                "message": "No destination calendar configured. Configure Google Calendar destination first.",
+                "stored_events_count": sum(len(events) for events in stored_events.values())
+            }
+        
+        # Run the sync
+        result = await controller.sync_agent_events()
+        
+        return {
+            "status": "success",
+            "message": "End-to-end sync test completed",
+            "sync_result": result,
+            "destination": {
+                "provider": config.destination.provider_type,
+                "calendar_id": config.destination.calendar_id
+            }
+        }
+        
+    except Exception as e:
+        return {
+            "status": "error",
+            "message": f"End-to-end sync test failed: {str(e)}",
+            "stored_events_count": sum(len(events) for events in stored_events.values())
+        }
 
 # Source management endpoints
 
@@ -178,19 +355,135 @@ async def add_agent(
 
 @router.get("/agents")
 async def list_agents(
+    include_inactive: bool = Query(
+        False, description="Include inactive agents"),
+    max_inactive_days: int = Query(
+        30, description="Max days of inactivity to be considered active"),
     controller: CalendarSyncController = Depends(get_sync_controller)
 ):
-    """List all synchronization agents"""
+    """List all synchronization agents
+
+    Args:
+        include_inactive: If True, include agents that haven't been seen recently
+        max_inactive_days: Number of days after which an agent is considered inactive
+    """
     try:
         config = await controller.load_configuration()
-        return [agent.dict() for agent in config.agents]
-    except ValueError:
-        # Return empty list if no configuration exists
-        return []
+        agents = getattr(config, 'agents', []) or []
+
+        if not include_inactive:
+            # Filter out agents that haven't been seen in max_inactive_days
+            cutoff = datetime.utcnow() - timedelta(days=max_inactive_days)
+            agents = [
+                agent for agent in agents
+                if agent.last_seen and agent.last_seen >= cutoff
+            ]
+
+        return [agent.dict() for agent in agents]
     except Exception as e:
+        logger.error(f"Failed to list agents: {str(e)}")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Failed to list agents: {str(e)}"
+        )
+
+
+@router.delete("/agents/{agent_id}")
+async def delete_agent(
+    agent_id: str,
+    force: bool = Query(
+        False, description="Force delete even if agent is active"),
+    controller: CalendarSyncController = Depends(get_sync_controller)
+):
+    """Delete an agent by ID"""
+    try:
+        config = await controller.load_configuration()
+        agents = getattr(config, 'agents', []) or []
+
+        # Find the agent
+        agent = next((a for a in agents if a.id == agent_id), None)
+        if not agent:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Agent {agent_id} not found"
+            )
+
+        # Check if agent is active (seen in last hour)
+        is_active = agent.last_seen and (
+            datetime.utcnow() - agent.last_seen) < timedelta(hours=1)
+        if is_active and not force:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Agent is currently active. Use force=true to delete an active agent."
+            )
+
+        # Remove the agent
+        config.agents = [a for a in agents if a.id != agent_id]
+        await controller.save_configuration(config)
+
+        return {"status": "success", "message": f"Agent {agent_id} deleted"}
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to delete agent {agent_id}: {str(e)}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to delete agent: {str(e)}"
+        )
+
+
+@router.post("/agents/cleanup")
+async def cleanup_inactive_agents(
+    max_inactive_days: int = Query(
+        30, description="Delete agents inactive for this many days"),
+    dry_run: bool = Query(
+        True, description="If True, only show what would be deleted"),
+    controller: CalendarSyncController = Depends(get_sync_controller)
+):
+    """Clean up inactive agents
+
+    Args:
+        max_inactive_days: Delete agents that haven't been seen in this many days
+        dry_run: If True, only return the list of agents that would be deleted
+    """
+    try:
+        config = await controller.load_configuration()
+        agents = getattr(config, 'agents', []) or []
+
+        if not agents:
+            return {"status": "success", "message": "No agents to clean up", "deleted": []}
+
+        # Find inactive agents
+        cutoff = datetime.utcnow() - timedelta(days=max_inactive_days)
+        inactive_agents = [
+            agent for agent in agents
+            if agent.last_seen is None or agent.last_seen < cutoff
+        ]
+
+        if dry_run:
+            return {
+                "status": "dry_run",
+                "message": f"Would delete {len(inactive_agents)} inactive agents",
+                "agents": [agent.dict() for agent in inactive_agents]
+            }
+
+        # Actually delete the agents
+        active_agents = [a for a in agents if a not in inactive_agents]
+        config.agents = active_agents
+        await controller.save_configuration(config)
+
+        return {
+            "status": "success",
+            "message": f"Deleted {len(inactive_agents)} inactive agents",
+            "deleted": [agent.dict() for agent in inactive_agents]
+        }
+
+    except Exception as e:
+        logger.error(f"Failed to clean up agents: {str(e)}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to clean up agents: {str(e)}"
         )
 
 
@@ -208,6 +501,77 @@ async def check_agent_status(
         )
 
 
+@router.get("/agents/{agent_id}/status")
+async def get_agent_status(
+    agent_id: str,
+    controller: CalendarSyncController = Depends(get_sync_controller)
+):
+    """Get status of a specific agent"""
+    try:
+        config = await controller.load_configuration()
+        agents = getattr(config, 'agents', []) or []
+        
+        # Find the agent
+        agent = next((a for a in agents if a.id == agent_id), None)
+        if not agent:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Agent {agent_id} not found"
+            )
+        
+        return agent.dict()
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to get agent status: {str(e)}"
+        )
+
+
+@router.post("/agents/register")
+async def register_agent(
+    agent_data: Dict[str, Any] = Body(...),
+    controller: CalendarSyncController = Depends(get_sync_controller)
+):
+    """Register a new agent with the sync server"""
+    try:
+        # Store agent registration info
+        agent_id = agent_data.get("id")
+        if not agent_id:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Agent ID is required"
+            )
+        
+        # Update agent_status dictionary for tracking
+        agent_status[agent_id] = {
+            "id": agent_id,
+            "name": agent_data.get("name", f"Agent {agent_id}"),
+            "environment": agent_data.get("environment", "Unknown"),
+            "agent_type": agent_data.get("agent_type", "python"),
+            "interval_minutes": agent_data.get("interval_minutes", 60),
+            "capabilities": agent_data.get("capabilities", []),
+            "config": agent_data.get("config", {}),
+            "status": "active",
+            "last_seen": datetime.utcnow(),
+            "event_count": 0
+        }
+        
+        return {
+            "status": "success",
+            "message": f"Agent {agent_id} registered successfully",
+            "id": agent_id
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to register agent: {str(e)}"
+        )
+
+
 @router.post("/agents/{agent_id}/heartbeat")
 async def agent_heartbeat(
     agent_id: str,
@@ -215,10 +579,36 @@ async def agent_heartbeat(
     controller: CalendarSyncController = Depends(get_sync_controller)
 ):
     """Register a heartbeat from a sync agent"""
-    print(f"Heartbeat received from agent {agent_id}: {data}")  # Add this line
+    print(f"Heartbeat received from agent {agent_id}: {data}")
 
     try:
-        return await controller.register_agent_heartbeat(agent_id, data)
+        # Update agent status
+        if agent_id not in agent_status:
+            # Auto-register agent if not found
+            agent_status[agent_id] = {
+                "id": agent_id,
+                "name": f"Agent {agent_id}",
+                "environment": data.get("environment", "Unknown"),
+                "status": "active",
+                "last_seen": datetime.utcnow(),
+                "event_count": 0
+            }
+        else:
+            agent_status[agent_id]["last_seen"] = datetime.utcnow()
+            agent_status[agent_id]["status"] = data.get("status", "active")
+        
+        # Process events if included
+        events = data.get("events", [])
+        if events:
+            stored_events[agent_id] = events
+            agent_status[agent_id]["event_count"] = len(events)
+            print(f"Stored {len(events)} events from agent {agent_id}")
+        
+        return {
+            "status": "success",
+            "message": "Heartbeat registered",
+            "pending_updates": []  # Could add pending updates here
+        }
     except HTTPException:
         raise
     except Exception as e:
@@ -368,7 +758,7 @@ async def mark_update_processed(
         return await controller.mark_agent_update_processed(agent_id, update_id)
     except Exception as e:
         raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Failed to mark update as processed: {str(e)}"
         )
 
@@ -377,158 +767,16 @@ async def mark_update_processed(
 stored_events = {}
 agent_status = {}
 
+# Health check endpoint
+
 
 @router.get("/health")
 async def sync_health_check():
     """Check sync service health"""
     return {
         "status": "ok",
-        "timestamp": datetime.utcnow().isoformat(),
-        "agents_registered": len(agent_status),
-        "total_events": sum(len(events) for events in stored_events.values())
+        "timestamp": datetime.utcnow().isoformat()
     }
-
-
-@router.post("/agents")
-async def register_agent(agent_data: Dict[str, Any] = Body(...)):
-    """Register a new synchronization agent"""
-    try:
-        agent_id = agent_data.get("id") or str(uuid.uuid4())
-
-        # Store agent information
-        agent_status[agent_id] = {
-            "id": agent_id,
-            "name": agent_data.get("name", "Unknown Agent"),
-            "environment": agent_data.get("environment", "Unknown"),
-            "agent_type": agent_data.get("agent_type", "unknown"),
-            "last_seen": datetime.utcnow().isoformat(),
-            "status": "registered",
-            "event_count": 0
-        }
-
-        logger.info(f"Agent registered: {agent_id} - {agent_data.get('name')}")
-
-        return {
-            "id": agent_id,
-            "status": "registered",
-            "message": f"Agent {agent_data.get('name')} registered successfully"
-        }
-
-    except Exception as e:
-        logger.error(f"Error registering agent: {e}")
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"Failed to register agent: {str(e)}"
-        )
-
-
-@router.get("/agents/status")
-async def get_agents_status():
-    """Get status of all registered agents"""
-    return {
-        "agents": list(agent_status.values()),
-        "total_agents": len(agent_status),
-        "active_agents": len([a for a in agent_status.values() if a.get("status") == "active"])
-    }
-
-
-@router.post("/agents/{agent_id}/heartbeat")
-async def agent_heartbeat(agent_id: str, data: Dict[str, Any] = Body(...)):
-    """Register a heartbeat from a sync agent"""
-    try:
-        # Update agent status
-        if agent_id in agent_status:
-            agent_status[agent_id].update({
-                "last_seen": datetime.utcnow().isoformat(),
-                "status": "active",
-                "last_heartbeat_data": data
-            })
-        else:
-            # Create new agent entry if not exists
-            agent_status[agent_id] = {
-                "id": agent_id,
-                "name": f"Agent {agent_id}",
-                "environment": data.get("environment", "Unknown"),
-                "last_seen": datetime.utcnow().isoformat(),
-                "status": "active",
-                "event_count": 0
-            }
-
-        logger.info(f"Heartbeat received from agent {agent_id}")
-
-        return {
-            "status": "ok",
-            "message": "Heartbeat received",
-            "agent_status": agent_status[agent_id]
-        }
-
-    except Exception as e:
-        logger.error(f"Error processing heartbeat from {agent_id}: {e}")
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"Failed to process heartbeat: {str(e)}"
-        )
-
-
-@router.post("/import/{agent_id}")
-async def import_events(agent_id: str, events: List[Dict[str, Any]] = Body(...)):
-    """Import events from a remote agent"""
-    try:
-        logger.info(f"Importing {len(events)} events from agent {agent_id}")
-
-        # Validate events
-        valid_events = []
-        for event in events:
-            if not event.get("id") or not event.get("title"):
-                logger.warning(f"Skipping invalid event: {event}")
-                continue
-
-            # Ensure required fields
-            event.setdefault("provider", "unknown")
-            event.setdefault("calendar_id", "default")
-            event.setdefault("status", "confirmed")
-            event.setdefault("all_day", False)
-            event.setdefault("recurring", False)
-            event.setdefault("participants", [])
-
-            # Add import metadata
-            event["imported_at"] = datetime.utcnow().isoformat()
-            event["imported_by_agent"] = agent_id
-
-            valid_events.append(event)
-
-        # Store events
-        if agent_id not in stored_events:
-            stored_events[agent_id] = []
-
-        # Replace all events for this agent (full sync)
-        stored_events[agent_id] = valid_events
-
-        # Update agent status
-        if agent_id in agent_status:
-            agent_status[agent_id].update({
-                "event_count": len(valid_events),
-                "last_import": datetime.utcnow().isoformat(),
-                "status": "active"
-            })
-
-        logger.info(
-            f"Successfully imported {len(valid_events)} events from agent {agent_id}")
-
-        return {
-            "status": "success",
-            "events_imported": len(valid_events),
-            "events_skipped": len(events) - len(valid_events),
-            "total_events_for_agent": len(valid_events),
-            "message": f"Successfully imported {len(valid_events)} events"
-        }
-
-    except Exception as e:
-        logger.error(f"Error importing events from agent {agent_id}: {e}")
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"Failed to import events: {str(e)}"
-        )
 
 
 @router.get("/events")
