@@ -196,7 +196,7 @@ class RemoteCalendarAgent:
             if include_events:
                 events = await self.collect_all_events()
                 if events:
-                    heartbeat_data["events"] = [e.dict() for e in events]
+                    heartbeat_data["events"] = events
 
             # Send heartbeat to central service
             url = f"{self.central_api_url}/sync/agents/{self.agent_id}/heartbeat"

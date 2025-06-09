@@ -528,18 +528,32 @@ async def list_agents(
         max_inactive_days: Number of days after which an agent is considered inactive
     """
     try:
-        config = await controller.load_configuration()
-        agents = getattr(config, 'agents', []) or []
+        # Return agents from heartbeat status, not configuration
+        # This shows actual running agents, not just configured ones
+        agents_list = []
+        
+        for agent_id, agent_data in agent_status.items():
+            # Convert to dictionary and include additional computed fields
+            agent_dict = {
+                "id": agent_id,
+                "name": agent_data.get("name", f"Agent {agent_id}"),
+                "status": agent_data.get("status", "unknown"),
+                "last_seen": agent_data.get("last_seen").isoformat() if agent_data.get("last_seen") else None,
+                "environment": agent_data.get("environment", "Unknown"),
+                "event_count": agent_data.get("event_count", 0),
+                "uptime": None,  # Could be calculated if needed
+                "last_heartbeat": agent_data.get("last_seen").isoformat() if agent_data.get("last_seen") else None
+            }
+            
+            # Filter inactive agents if requested
+            if not include_inactive and agent_data.get("last_seen"):
+                cutoff = datetime.utcnow() - timedelta(days=max_inactive_days)
+                if agent_data["last_seen"] < cutoff:
+                    continue
+            
+            agents_list.append(agent_dict)
 
-        if not include_inactive:
-            # Filter out agents that haven't been seen in max_inactive_days
-            cutoff = datetime.utcnow() - timedelta(days=max_inactive_days)
-            agents = [
-                agent for agent in agents
-                if agent.last_seen and agent.last_seen >= cutoff
-            ]
-
-        return [agent.dict() for agent in agents]
+        return agents_list
     except Exception as e:
         logger.error(f"Failed to list agents: {str(e)}")
         raise HTTPException(
