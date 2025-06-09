@@ -320,7 +320,7 @@ async def configure_caldav_destination(
                     "password": password,
                     "calendar_url": calendar_url
                 },
-                conflict_resolution=ConflictResolution.PREFER_DESTINATION,
+                conflict_resolution=ConflictResolution.DESTINATION_WINS,
                 categories={}
             )
             logger.info(f"Created CalDAV destination configuration: {destination.name}")
