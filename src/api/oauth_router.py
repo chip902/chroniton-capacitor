@@ -242,6 +242,10 @@ async def google_callback(
                 detail="Invalid or expired state parameter"
             )
 
+        # Store redirect URL before removing state
+        redirect_url = oauth_state.redirect_url
+        tenant_id = oauth_state.tenant_id
+
         # Remove state after verification
         remove_oauth_state(state)
 
@@ -262,20 +266,20 @@ async def google_callback(
         
         # Automatically create sync source with these tokens
         try:
-            await create_sync_source_from_tokens(tokens, oauth_state.tenant_id)
+            await create_sync_source_from_tokens(tokens, tenant_id)
             logger.info("Automatically created sync source from OAuth tokens")
         except Exception as e:
             logger.error(f"Failed to create sync source from OAuth tokens: {e}")
         
         # If there's a redirect URL, redirect with tokens (for frontend integration)
-        if oauth_state.redirect_url:
+        if redirect_url:
             # In production, you might want to store tokens securely and redirect with a session ID
             redirect_params = urlencode({
                 "provider": "google",
                 "success": "true",
                 "access_token": tokens["access_token"][:50] + "...",  # Truncated for security
             })
-            return RedirectResponse(url=f"{oauth_state.redirect_url}?{redirect_params}")
+            return RedirectResponse(url=f"{redirect_url}?{redirect_params}")
         
         # Return success message instead of raw token info
         return {
