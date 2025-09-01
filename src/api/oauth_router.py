@@ -99,20 +99,28 @@ async def create_sync_source_from_tokens(tokens: Dict[str, Any], tenant_id: Opti
         
         # Initialize unified service to get calendars
         unified_service = UnifiedCalendarService()
-        calendars = await unified_service.list_calendars(credentials)
+        user_credentials = {CalendarProvider.GOOGLE.value: credentials.dict()}
+        calendars_result = await unified_service.list_all_calendars(user_credentials)
+        calendars = calendars_result.get(CalendarProvider.GOOGLE.value, [])
         
         # Select calendars to sync (primary + any owned calendars)
         selected_calendars = []
         calendar_selections = []
         
         for calendar in calendars:
+            # Handle both dictionary and object formats
+            calendar_id = calendar.get('id') if isinstance(calendar, dict) else calendar.id
+            calendar_name = calendar.get('summary') if isinstance(calendar, dict) else calendar.name
+            is_primary = calendar.get('primary', False) if isinstance(calendar, dict) else getattr(calendar, 'primary', False)
+            access_role = calendar.get('accessRole') if isinstance(calendar, dict) else getattr(calendar, 'access_role', None)
+            
             # Include primary calendar and owned calendars (exclude read-only)
-            if calendar.primary or (hasattr(calendar, 'access_role') and calendar.access_role == 'owner'):
-                selected_calendars.append(calendar.id)
+            if is_primary or (access_role and access_role == 'owner'):
+                selected_calendars.append(calendar_id)
                 calendar_selections.append({
-                    "id": calendar.id,
-                    "name": calendar.name,
-                    "primary": calendar.primary or False
+                    "id": calendar_id,
+                    "name": calendar_name,
+                    "primary": is_primary
                 })
         
         if not selected_calendars:
@@ -307,7 +315,9 @@ async def google_callback(
                 "success": "true",
                 "access_token": tokens["access_token"][:50] + "...",  # Truncated for security
             })
-            final_redirect_url = f"{redirect_url}?{redirect_params}"
+            # Handle URL that already has query parameters
+            separator = "&" if "?" in redirect_url else "?"
+            final_redirect_url = f"{redirect_url}{separator}{redirect_params}"
             print(f"OAUTH DEBUG: Redirecting to: {final_redirect_url}")
             logger.error(f"OAUTH DEBUG: Redirecting to: {final_redirect_url}")
             return RedirectResponse(url=final_redirect_url)
