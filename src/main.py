@@ -66,6 +66,7 @@ except Exception as e:
 # Import local modules with error handling
 api_router = None
 sync_router = None
+oauth_router = None
 setup_calendar_mcp_server = None
 SyncStorageManager = None
 CalendarSyncController = None
@@ -108,6 +109,13 @@ except ImportError as e:
             sync_router = None
     else:
         sync_router = None
+
+try:
+    from api.oauth_router import router as oauth_router
+    print("OAuth router imported successfully")
+except ImportError as e:
+    print(f"Error importing OAuth router: {e}")
+    oauth_router = None
 
 try:
     from mcp.calendar_server import setup_calendar_mcp_server
@@ -214,6 +222,11 @@ if sync_router:
     app.include_router(sync_router)
     print("Sync router included")
 
+if oauth_router:
+    # OAuth router already has prefix='/api/auth'
+    app.include_router(oauth_router)
+    print("OAuth router included")
+
 # Configure CORS with hardcoded wildcard origins
 # Hardcode CORS to allow all origins (*) for development
 app.add_middleware(
@@ -244,6 +257,16 @@ try:
         print("Warning: Sync router not included")
 except Exception as e:
     print(f"Error including sync router: {e}")
+
+try:
+    if oauth_router:
+        # OAuth router already has prefix='/api/auth'
+        app.include_router(oauth_router)
+        print("OAuth router included")
+    else:
+        print("Warning: OAuth router not included")
+except Exception as e:
+    print(f"Error including OAuth router: {e}")
 
 # MCP server instance (will be initialized on startup)
 calendar_mcp_server = None
