@@ -429,3 +429,121 @@ class SyncStorageManager:
 
                 # Remove original update file
                 os.remove(update_path)
+
+    async def load_sync_tokens(self) -> List[Dict[str, Any]]:
+        """Load sync tokens from persistent storage"""
+        if self.use_redis and self.redis:
+            # Get all sync token keys
+            token_keys = await self.redis.keys("sync:tokens:*")
+            tokens = []
+            
+            for key in token_keys:
+                token_str = await self.redis.get(key)
+                if token_str:
+                    try:
+                        token_data = json.loads(token_str)
+                        tokens.append(token_data)
+                    except json.JSONDecodeError:
+                        logger.error(f"Failed to decode sync token from key: {key}")
+                        
+            return tokens
+        else:
+            # File-based storage
+            tokens_path = os.path.join(self.file_storage_path, "sync_tokens.json")
+            if os.path.exists(tokens_path):
+                try:
+                    with open(tokens_path, "r") as f:
+                        return json.load(f)
+                except (json.JSONDecodeError, IOError) as e:
+                    logger.error(f"Failed to load sync tokens from file: {e}")
+                    return []
+            return []
+
+    async def save_sync_tokens(self, tokens: List[Dict[str, Any]]) -> None:
+        """Save sync tokens to persistent storage"""
+        if self.use_redis and self.redis:
+            # Clear existing tokens
+            token_keys = await self.redis.keys("sync:tokens:*")
+            if token_keys:
+                await self.redis.delete(*token_keys)
+                
+            # Save new tokens
+            for token in tokens:
+                token_id = token.get('id', f"token_{len(tokens)}")
+                key = f"sync:tokens:{token_id}"
+                await self.redis.set(key, json.dumps(token, default=str))
+                
+                # Set expiration if token has expiry information
+                if 'expires_at' in token:
+                    try:
+                        expires_at = datetime.fromisoformat(token['expires_at'].replace('Z', '+00:00'))
+                        expiry_seconds = int((expires_at - datetime.utcnow()).total_seconds())
+                        if expiry_seconds > 0:
+                            await self.redis.expire(key, expiry_seconds)
+                    except (ValueError, TypeError):
+                        # If we can't parse expiry, set default expiration of 30 days
+                        await self.redis.expire(key, 60 * 60 * 24 * 30)
+        else:
+            # File-based storage
+            tokens_path = os.path.join(self.file_storage_path, "sync_tokens.json")
+            try:
+                with open(tokens_path, "w") as f:
+                    json.dump(tokens, f, indent=2, default=str)
+            except IOError as e:
+                logger.error(f"Failed to save sync tokens to file: {e}")
+                raise
+
+    async def delete_sync_token(self, token_id: str) -> bool:
+        """Delete a specific sync token"""
+        if self.use_redis and self.redis:
+            key = f"sync:tokens:{token_id}"
+            result = await self.redis.delete(key)
+            return result > 0
+        else:
+            # For file-based storage, we need to load, filter, and save
+            tokens = await self.load_sync_tokens()
+            original_count = len(tokens)
+            tokens = [token for token in tokens if token.get('id') != token_id]
+            
+            if len(tokens) < original_count:
+                await self.save_sync_tokens(tokens)
+                return True
+            return False
+
+    async def save_sync_token(self, token_id: str, token_data: Dict[str, Any]) -> None:
+        """Save a single sync token"""
+        if self.use_redis and self.redis:
+            key = f"sync:tokens:{token_id}"
+            await self.redis.set(key, json.dumps(token_data, default=str))
+            
+            # Set expiration if token has expiry information
+            if 'expires_at' in token_data:
+                try:
+                    expires_at = datetime.fromisoformat(token_data['expires_at'].replace('Z', '+00:00'))
+                    expiry_seconds = int((expires_at - datetime.utcnow()).total_seconds())
+                    if expiry_seconds > 0:
+                        await self.redis.expire(key, expiry_seconds)
+                except (ValueError, TypeError):
+                    # If we can't parse expiry, set default expiration of 30 days
+                    await self.redis.expire(key, 60 * 60 * 24 * 30)
+        else:
+            # File-based storage - load all tokens, update/add this one, save all
+            tokens = await self.load_sync_tokens()
+            
+            # Find and update existing token or add new one
+            updated = False
+            for i, token in enumerate(tokens):
+                if token.get('id') == token_id:
+                    tokens[i] = token_data
+                    updated = True
+                    break
+                    
+            if not updated:
+                tokens.append(token_data)
+                
+            await self.save_sync_tokens(tokens)
+
+    async def bulk_save_sync_tokens(self, tokens_data: List[Dict[str, Any]]) -> None:
+        """Save multiple sync tokens efficiently"""
+        # This is essentially the same as save_sync_tokens
+        await self.save_sync_tokens(tokens_data)

@@ -157,11 +157,12 @@ async def exchange_google_auth_code(
         from auth.google_auth import GoogleCalendarAuth
         
         auth_code = data.get("code")
+        redirect_uri = data.get("redirect_uri")
         if not auth_code:
             raise ValueError("Authorization code is required")
             
         auth_service = GoogleCalendarAuth()
-        credentials = await auth_service.exchange_code_for_tokens(auth_code)
+        credentials = await auth_service.exchange_code_for_tokens(auth_code, redirect_uri)
         
         return {
             "status": "success",
