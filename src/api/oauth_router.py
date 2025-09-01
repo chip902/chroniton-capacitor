@@ -196,15 +196,9 @@ async def google_authorize(
         )
         store_oauth_state(state, oauth_state)
 
-        # Create authorization URL
-        result = google_auth.create_auth_url(tenant_id=tenant_id)
+        # Create authorization URL with our state parameter
+        result = google_auth.create_auth_url(tenant_id=state)  # Pass state as tenant_id
         auth_url = result["auth_url"]
-        
-        # Add state parameter to the auth URL
-        if '?' in auth_url:
-            auth_url += f"&state={state}"
-        else:
-            auth_url += f"?state={state}"
 
         logger.info(f"Redirecting to Google OAuth: {auth_url}")
         
