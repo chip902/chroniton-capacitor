@@ -292,7 +292,9 @@ async def periodic_sync(interval_minutes: int = 60):
             print("Starting calendar synchronization")
             if sync_controller:
                 try:
-                    await sync_controller.sync_all_calendars()
+                    from fastapi import BackgroundTasks
+                    background_tasks = BackgroundTasks()
+                    await sync_controller.sync_all_calendars(background_tasks)
                     print("Calendar synchronization completed successfully")
                 except Exception as e:
                     print(f"Error during sync_all_calendars: {e}")

@@ -290,10 +290,9 @@ class BidirectionalSyncEngine:
             )
         
         # Execute collections concurrently
+        total_collected = 0
         if collection_tasks:
             results = await asyncio.gather(*collection_tasks, return_exceptions=True)
-            
-            total_collected = 0
             for result in results:
                 if isinstance(result, Exception):
                     error_msg = f"Error collecting from source: {result}"
