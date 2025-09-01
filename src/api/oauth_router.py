@@ -17,6 +17,10 @@ from pydantic import BaseModel
 from auth.google_auth import GoogleCalendarAuth
 from auth.microsoft_auth import MicrosoftGraphAuth
 from utils.config import settings
+from services.unified_calendar import UnifiedCalendarService
+from services.calendar_event import CalendarCredentials, CalendarProvider
+from sync.controller import CalendarSyncController
+from sync.storage import SyncStorageManager
 
 logger = logging.getLogger(__name__)
 
@@ -66,6 +70,99 @@ def get_oauth_state(state: str) -> Optional[OAuthState]:
 def remove_oauth_state(state: str) -> None:
     """Remove OAuth state after use"""
     _oauth_states.pop(state, None)
+
+async def create_sync_source_from_tokens(tokens: Dict[str, Any], tenant_id: Optional[str] = None) -> None:
+    """Create a sync source automatically from OAuth tokens"""
+    try:
+        # Create credentials object
+        credentials = CalendarCredentials(
+            provider=CalendarProvider.GOOGLE,
+            token_type=tokens.get("token_type", "Bearer"),
+            access_token=tokens["access_token"],
+            refresh_token=tokens.get("refresh_token"),
+            expires_at=tokens.get("expires_at")
+        )
+        
+        # Initialize unified service to get calendars
+        unified_service = UnifiedCalendarService()
+        calendars = await unified_service.list_calendars(credentials)
+        
+        # Select calendars to sync (primary + any owned calendars)
+        selected_calendars = []
+        calendar_selections = []
+        
+        for calendar in calendars:
+            # Include primary calendar and owned calendars (exclude read-only)
+            if calendar.primary or (hasattr(calendar, 'access_role') and calendar.access_role == 'owner'):
+                selected_calendars.append(calendar.id)
+                calendar_selections.append({
+                    "id": calendar.id,
+                    "name": calendar.name,
+                    "primary": calendar.primary or False
+                })
+        
+        if not selected_calendars:
+            logger.warning("No suitable calendars found for sync source creation")
+            return
+            
+        # Initialize storage and controller
+        storage = SyncStorageManager(use_redis=False)
+        await storage.initialize()
+        
+        controller = CalendarSyncController(storage)
+        await controller.initialize()
+        
+        # Create sync source
+        from sync.models import SyncSource
+        
+        source_id = f"google_oauth_{tenant_id or 'default'}"
+        sync_source = SyncSource(
+            id=source_id,
+            name=f"Google Calendar OAuth ({len(selected_calendars)} calendars)",
+            provider_type="google",
+            credentials=credentials.dict(),
+            calendar_selections=calendar_selections,
+            sync_direction="bidirectional",
+            sync_method="incremental",
+            enabled=True
+        )
+        
+        # Save the sync source
+        config = await controller.load_configuration()
+        
+        # Remove existing source with same ID if it exists
+        config.sources = [s for s in config.sources if s.id != source_id]
+        
+        # Add new source
+        config.sources.append(sync_source)
+        
+        # Save configuration
+        await controller.save_configuration(config)
+        
+        # If no destination exists, create one using the primary calendar
+        if not config.destination:
+            primary_calendar = next((cal for cal in calendar_selections if cal["primary"]), calendar_selections[0])
+            
+            from sync.models import SyncDestination
+            destination = SyncDestination(
+                id="google_oauth_destination",
+                name="Google Calendar Destination (OAuth)",
+                provider_type="google",
+                credentials=credentials.dict(),
+                calendar_id=primary_calendar["id"],
+                conflict_resolution="latest_wins",
+                color_management="source_color",
+                categories={},
+                source_calendars={}
+            )
+            
+            await controller.configure_destination(destination)
+        
+        logger.info(f"Successfully created sync source '{source_id}' with {len(selected_calendars)} calendars")
+        
+    except Exception as e:
+        logger.error(f"Error creating sync source from OAuth tokens: {e}")
+        raise
 
 # Google Calendar OAuth endpoints
 
@@ -169,6 +266,13 @@ async def google_callback(
 
         logger.info("Google OAuth completed successfully")
         
+        # Automatically create sync source with these tokens
+        try:
+            await create_sync_source_from_tokens(tokens, oauth_state.tenant_id)
+            logger.info("Automatically created sync source from OAuth tokens")
+        except Exception as e:
+            logger.error(f"Failed to create sync source from OAuth tokens: {e}")
+        
         # If there's a redirect URL, redirect with tokens (for frontend integration)
         if oauth_state.redirect_url:
             # In production, you might want to store tokens securely and redirect with a session ID
@@ -179,8 +283,13 @@ async def google_callback(
             })
             return RedirectResponse(url=f"{oauth_state.redirect_url}?{redirect_params}")
         
-        # Return token info as JSON response
-        return token_info
+        # Return success message instead of raw token info
+        return {
+            "status": "success",
+            "message": "Google Calendar connected and sync source created successfully!",
+            "provider": "google",
+            "next_steps": "Your calendars are now being synced. Check the sync sources at /sync/sources"
+        }
 
     except HTTPException:
         raise
