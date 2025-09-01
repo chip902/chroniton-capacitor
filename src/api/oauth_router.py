@@ -233,6 +233,9 @@ async def google_callback(
     error: Optional[str] = None
 ):
     """Handle Google OAuth callback"""
+    print(f"OAUTH DEBUG: Callback started - code: {code is not None}, state: {state}, error: {error}")
+    logger.error(f"OAUTH DEBUG: Callback started - code: {code is not None}, state: {state}, error: {error}")
+    
     try:
         # Check for OAuth errors
         if error:
@@ -323,7 +326,11 @@ async def google_callback(
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"Error in Google OAuth callback: {e}")
+        print(f"OAUTH DEBUG: Exception in Google OAuth callback: {e}")
+        logger.error(f"OAUTH DEBUG: Exception in Google OAuth callback: {e}")
+        import traceback
+        print(f"OAUTH DEBUG: Traceback: {traceback.format_exc()}")
+        logger.error(f"OAUTH DEBUG: Traceback: {traceback.format_exc()}")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"OAuth callback failed: {str(e)}"
