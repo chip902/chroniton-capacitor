@@ -4,7 +4,7 @@ Synchronization API Router
 This module defines the API endpoints for calendar synchronization.
 """
 
-from fastapi import APIRouter, Depends, HTTPException, status, Body, Query
+from fastapi import APIRouter, Depends, HTTPException, status, Body, Query, BackgroundTasks
 from typing import List, Dict, Any, Optional, Union
 import uuid
 from datetime import datetime, timedelta
@@ -367,6 +367,7 @@ async def configure_caldav_destination(
 
 @router.post("/test/end-to-end")
 async def test_end_to_end_sync(
+    background_tasks: BackgroundTasks,
     controller: CalendarSyncController = Depends(get_sync_controller)
 ):
     """Test the complete sync flow from agent events to destination calendar"""
@@ -389,12 +390,12 @@ async def test_end_to_end_sync(
                 "stored_events_count": sum(len(events) for events in stored_events.values())
             }
         
-        # Run the sync
-        result = await controller.sync_agent_events()
+        # Run the sync with background tasks
+        result = await controller.sync_agent_events(background_tasks)
         
         return {
             "status": "success",
-            "message": "End-to-end sync test completed",
+            "message": "End-to-end sync test started in background",
             "sync_result": result,
             "destination": {
                 "provider": config.destination.provider_type,
@@ -796,11 +797,12 @@ async def agent_heartbeat(
 
 @router.post("/run")
 async def sync_all_calendars(
+    background_tasks: BackgroundTasks,
     controller: CalendarSyncController = Depends(get_sync_controller)
 ):
     """Synchronize all calendars from all sources to the destination calendar"""
     try:
-        return await controller.sync_all_calendars()
+        return await controller.sync_all_calendars(background_tasks)
     except Exception as e:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
@@ -811,11 +813,12 @@ async def sync_all_calendars(
 @router.post("/run/{source_id}")
 async def sync_single_source(
     source_id: str,
+    background_tasks: BackgroundTasks,
     controller: CalendarSyncController = Depends(get_sync_controller)
 ):
     """Synchronize a single source to the destination calendar"""
     try:
-        return await controller.sync_single_source(source_id)
+        return await controller.sync_single_source(source_id, background_tasks)
     except ValueError as e:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -834,6 +837,7 @@ async def sync_single_source(
 async def import_events(
     source_id: str,
     events: List[Dict[str, Any]] = Body(...),
+    background_tasks: BackgroundTasks,
     controller: CalendarSyncController = Depends(get_sync_controller)
 ):
     """Import events for a specific source"""
@@ -841,8 +845,8 @@ async def import_events(
         # Store the imported events
         await controller.storage.save_import_data(source_id, events)
 
-        # Trigger a sync for this source
-        sync_result = await controller.sync_single_source(source_id)
+        # Trigger a sync for this source using background tasks
+        sync_result = await controller.sync_single_source(source_id, background_tasks)
 
         return {
             "status": "success",

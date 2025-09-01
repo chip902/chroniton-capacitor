@@ -10,7 +10,7 @@ import asyncio
 import json
 from typing import List, Dict, Any, Optional, Set
 from datetime import datetime, timedelta
-from fastapi import HTTPException, status
+from fastapi import HTTPException, status, BackgroundTasks
 
 from services.unified_calendar import UnifiedCalendarService
 from services.calendar_event import CalendarEvent, CalendarProvider
@@ -19,6 +19,10 @@ from sync.architecture import (
     SyncDirection, SyncFrequency, SyncMethod, ConflictResolution
 )
 from sync.storage import SyncStorageManager
+from sync.sync_engine import BidirectionalSyncEngine, SyncProgress
+from sync.conflict_resolver import ConflictManager
+from sync.token_manager import TokenManager
+from sync.realtime_sync import RealtimeSyncEngine
 
 # Set up logging
 logger = logging.getLogger(__name__)
@@ -34,6 +38,51 @@ class CalendarSyncController:
         self.storage = storage_manager
         self.unified_service = UnifiedCalendarService()
         self.active_syncs = set()  # Track active sync operations
+        
+        # Initialize enhanced sync components
+        self.sync_engine = BidirectionalSyncEngine(storage_manager, self.unified_service)
+        self.conflict_manager = ConflictManager(storage_manager)
+        self.token_manager = TokenManager(storage_manager, self.unified_service)
+        self.realtime_engine = RealtimeSyncEngine(
+            storage_manager, 
+            self.sync_engine, 
+            self.unified_service
+        )
+        
+        # Track initialization
+        self._initialized = False
+    
+    async def initialize(self):
+        """Initialize all sync components"""
+        if self._initialized:
+            return
+        
+        logger.info("Initializing CalendarSyncController components")
+        
+        # Initialize token manager
+        await self.token_manager.initialize()
+        
+        # Initialize real-time sync engine
+        await self.realtime_engine.start()
+        
+        self._initialized = True
+        logger.info("CalendarSyncController fully initialized")
+    
+    async def shutdown(self):
+        """Shutdown all sync components"""
+        if not self._initialized:
+            return
+        
+        logger.info("Shutting down CalendarSyncController components")
+        
+        # Shutdown real-time sync engine
+        await self.realtime_engine.stop()
+        
+        # Shutdown token manager
+        await self.token_manager.shutdown()
+        
+        self._initialized = False
+        logger.info("CalendarSyncController shut down")
 
     async def load_configuration(self) -> SyncConfiguration:
         """Load synchronization configuration from storage"""
@@ -189,15 +238,18 @@ class CalendarSyncController:
         await self.save_configuration(config)
         return agent
 
-    async def sync_all_calendars(self) -> Dict[str, Any]:
+    async def sync_all_calendars(self, background_tasks: BackgroundTasks) -> Dict[str, Any]:
         """
-        Synchronize all calendars from all sources to the destination calendar
+        Synchronize all calendars from all sources to the destination calendar using enhanced sync engine
         """
         if "sync_all" in self.active_syncs:
             return {"status": "in_progress", "message": "Sync already in progress"}
 
         try:
             self.active_syncs.add("sync_all")
+
+            # Ensure controller is initialized
+            await self.initialize()
 
             # Load configuration
             config = await self.load_configuration()
@@ -206,64 +258,41 @@ class CalendarSyncController:
             if not config.destination:
                 raise ValueError("Destination calendar not configured")
 
-            # Results container
-            results = {
-                "status": "completed",
-                "sources_synced": 0,
-                "events_synced": 0,
-                "errors": [],
-                "start_time": datetime.utcnow().isoformat(),
-                "end_time": None
+            # Use the enhanced sync engine for bidirectional sync
+            operation_id = await self.sync_engine.sync_bidirectional(
+                config, 
+                background_tasks
+            )
+
+            return {
+                "status": "started",
+                "operation_id": operation_id,
+                "message": "Bidirectional sync started in background",
+                "start_time": datetime.utcnow().isoformat()
             }
 
-            # Process each source
-            for source in config.sources:
-                if not source.enabled:
-                    continue
-
-                try:
-                    # Sync this source
-                    source_result = await self.sync_single_source(source.id)
-                    results["sources_synced"] += 1
-                    results["events_synced"] += source_result.get(
-                        "events_synced", 0)
-                except Exception as e:
-                    error_msg = f"Error syncing source {source.id}: {str(e)}"
-                    logger.error(error_msg)
-                    results["errors"].append(error_msg)
-
-            # Also process agent events from heartbeats
-            try:
-                agent_result = await self.sync_agent_events()
-                results["sources_synced"] += agent_result.get("agents_processed", 0)
-                results["events_synced"] += agent_result.get("events_synced", 0)
-                if agent_result.get("errors"):
-                    results["errors"].extend(agent_result["errors"])
-            except Exception as e:
-                error_msg = f"Error syncing agent events: {str(e)}"
-                logger.error(error_msg)
-                results["errors"].append(error_msg)
-
-            # Update completion time after all processing
-            results["end_time"] = datetime.utcnow().isoformat()
-
-            # Store sync results
-            await self.storage.save_sync_result(results)
-
-            return results
-
+        except Exception as e:
+            logger.error(f"Error starting sync operation: {e}")
+            return {
+                "status": "failed",
+                "error": str(e),
+                "timestamp": datetime.utcnow().isoformat()
+            }
         finally:
-            self.active_syncs.remove("sync_all")
+            self.active_syncs.discard("sync_all")
 
-    async def sync_single_source(self, source_id: str) -> Dict[str, Any]:
+    async def sync_single_source(self, source_id: str, background_tasks: BackgroundTasks) -> Dict[str, Any]:
         """
-        Synchronize a single source to the destination calendar
+        Synchronize a single source to the destination calendar using enhanced sync engine
         """
         if source_id in self.active_syncs:
             return {"status": "in_progress", "message": f"Sync for source {source_id} already in progress"}
 
         try:
             self.active_syncs.add(source_id)
+
+            # Ensure controller is initialized
+            await self.initialize()
 
             # Load configuration
             config = await self.load_configuration()
@@ -282,58 +311,40 @@ class CalendarSyncController:
             if not config.destination:
                 raise ValueError("Destination calendar not configured")
 
-            # Results container
-            results = {
+            # Create a single-source configuration for the sync engine
+            single_source_config = SyncConfiguration(
+                sources=[source],
+                agents=config.agents,
+                destination=config.destination,
+                sync_frequency=config.sync_frequency,
+                global_settings=config.global_settings
+            )
+
+            # Use the enhanced sync engine for single source sync
+            operation_id = await self.sync_engine.sync_bidirectional(
+                single_source_config, 
+                background_tasks,
+                f"single_source_{source_id}"
+            )
+
+            return {
+                "status": "started",
                 "source_id": source_id,
-                "status": "completed",
-                "events_synced": 0,
-                "events_failed": 0,
-                "errors": [],
-                "start_time": datetime.utcnow().isoformat(),
-                "end_time": None
+                "operation_id": operation_id,
+                "message": f"Single source sync for {source.name} started in background",
+                "start_time": datetime.utcnow().isoformat()
             }
 
-            # Get events from the source
-            if source.sync_method == SyncMethod.API:
-                # Direct API synchronization
-                events = await self._get_events_from_api_source(source)
-            elif source.sync_method == SyncMethod.AGENT:
-                # Get events from agent cache
-                events = await self._get_events_from_agent_cache(source)
-            elif source.sync_method in (SyncMethod.FILE, SyncMethod.EMAIL):
-                # Get events from file or email
-                events = await self._get_events_from_import(source)
-            else:
-                raise ValueError(
-                    f"Unsupported sync method: {source.sync_method}")
-
-            # Write events to destination
-            if events:
-                write_results = await self._write_events_to_destination(events, config.destination, source)
-                results["events_synced"] = write_results.get(
-                    "success_count", 0)
-                results["events_failed"] = write_results.get(
-                    "failure_count", 0)
-                results["errors"].extend(write_results.get("errors", []))
-
-            # Update source last sync time
-            source.last_sync = datetime.utcnow()
-            await self.update_sync_source(source_id, {"last_sync": source.last_sync})
-
-            # Update completion time
-            results["end_time"] = datetime.utcnow().isoformat()
-
-            # Store sync results
-            await self.storage.save_source_sync_result(source_id, results)
-
-            return results
-
         except Exception as e:
-            logger.error(f"Error syncing source {source_id}: {e}")
-            raise
-
+            logger.error(f"Error starting sync for source {source_id}: {e}")
+            return {
+                "status": "failed",
+                "source_id": source_id,
+                "error": str(e),
+                "timestamp": datetime.utcnow().isoformat()
+            }
         finally:
-            self.active_syncs.remove(source_id)
+            self.active_syncs.discard(source_id)
 
     async def _get_events_from_api_source(self, source: SyncSource) -> List[CalendarEvent]:
         """Get events from a source using direct API access"""
@@ -993,9 +1004,12 @@ class CalendarSyncController:
                 detail=f"Failed to mark update as processed: {str(e)}"
             )
 
-    async def sync_agent_events(self) -> Dict[str, Any]:
-        """Process agent events from heartbeats and sync to destination"""
+    async def sync_agent_events(self, background_tasks: BackgroundTasks) -> Dict[str, Any]:
+        """Process agent events from heartbeats and sync to destination using enhanced sync engine"""
         try:
+            # Ensure controller is initialized
+            await self.initialize()
+            
             # Load configuration to get destination
             config = await self.load_configuration()
             
@@ -1010,73 +1024,38 @@ class CalendarSyncController:
             # Import the stored_events from the router module
             from api.sync_router import stored_events
 
-            results = {
-                "agents_processed": 0,
-                "events_synced": 0,
-                "errors": []
+            if not stored_events:
+                return {
+                    "agents_processed": 0,
+                    "events_synced": 0,
+                    "errors": [],
+                    "message": "No agent events to process"
+                }
+
+            # Use the enhanced sync engine to process agent events in background
+            operation_id = await self.sync_engine.sync_bidirectional(
+                config, 
+                background_tasks,
+                "agent_events_sync"
+            )
+
+            # Clear processed events after queueing for sync
+            agent_count = len([agent_id for agent_id, events in stored_events.items() if events])
+            stored_events.clear()
+            logger.info("Cleared agent events from memory after queueing for sync")
+
+            return {
+                "status": "started",
+                "operation_id": operation_id,
+                "agents_processed": agent_count,
+                "message": "Agent events sync started in background",
+                "start_time": datetime.utcnow().isoformat()
             }
-
-            # Process events from each agent
-            for agent_id, events_data in stored_events.items():
-                if not events_data:
-                    continue
-
-                try:
-                    results["agents_processed"] += 1
-                    
-                    # Convert agent events to CalendarEvent objects
-                    calendar_events = []
-                    for event_data in events_data:
-                        try:
-                            # Use from_outlook_mac since these are from OLK15EventParser
-                            calendar_event = CalendarEvent.from_outlook_mac(
-                                event_data, 
-                                calendar_id=event_data.get("calendar_name", f"agent_{agent_id}"),
-                                calendar_name=event_data.get("calendar_name")
-                            )
-                            calendar_events.append(calendar_event)
-                        except Exception as e:
-                            error_msg = f"Error converting event from agent {agent_id}: {str(e)}"
-                            logger.error(error_msg)
-                            results["errors"].append(error_msg)
-                            continue
-
-                    if calendar_events:
-                        # Create events in destination calendar
-                        try:
-                            created_events = await self.unified_service.create_events_in_destination(
-                                provider=config.destination.provider_type,
-                                calendar_id=config.destination.calendar_id,
-                                credentials=config.destination.credentials,
-                                events=calendar_events
-                            )
-                            
-                            synced_count = len(created_events)
-                            results["events_synced"] += synced_count
-                            
-                            logger.info(f"Synced {synced_count} events from agent {agent_id} to destination")
-                            
-                        except Exception as e:
-                            error_msg = f"Error creating events in destination from agent {agent_id}: {str(e)}"
-                            logger.error(error_msg)
-                            results["errors"].append(error_msg)
-
-                except Exception as e:
-                    error_msg = f"Error processing events from agent {agent_id}: {str(e)}"
-                    logger.error(error_msg)
-                    results["errors"].append(error_msg)
-
-            # Clear processed events after successful sync
-            if results["events_synced"] > 0:
-                stored_events.clear()
-                logger.info("Cleared processed agent events from memory")
-
-            return results
 
         except Exception as e:
             logger.error(f"Error in sync_agent_events: {str(e)}")
             return {
-                "agents_processed": 0,
-                "events_synced": 0,
-                "errors": [f"Failed to sync agent events: {str(e)}"]
+                "status": "failed",
+                "error": str(e),
+                "timestamp": datetime.utcnow().isoformat()
             }

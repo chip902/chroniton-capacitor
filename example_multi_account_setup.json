@@ -1,0 +1,92 @@
+{
+  "sources": [
+    {
+      "id": "google_work_account",
+      "name": "John's Work Google (company.com)",
+      "provider_type": "google",
+      "calendars": [
+        "primary",
+        "meetings@company.com",
+        "projects@company.com"
+      ],
+      "credentials": {
+        "access_token": "work_account_token_here",
+        "refresh_token": "work_account_refresh_token",
+        "account_email": "john.work@company.com"
+      },
+      "sync_method": "api",
+      "sync_direction": "bidirectional",
+      "enabled": true
+    },
+    {
+      "id": "google_personal_account", 
+      "name": "John's Personal Google (gmail.com)",
+      "provider_type": "google",
+      "calendars": [
+        "primary",
+        "family@gmail.com",
+        "personal_projects@gmail.com"
+      ],
+      "credentials": {
+        "access_token": "personal_account_token_here",
+        "refresh_token": "personal_account_refresh_token", 
+        "account_email": "john.personal@gmail.com"
+      },
+      "sync_method": "api",
+      "sync_direction": "bidirectional",
+      "enabled": true
+    },
+    {
+      "id": "microsoft_personal_account",
+      "name": "John's Personal Outlook",
+      "provider_type": "microsoft",
+      "calendars": [
+        "AQMkADAwATM0MDAAMS1iNzJjLWI2",
+        "AQMkADAwATM0MDAAMS1iNzJjLWI7"
+      ],
+      "credentials": {
+        "access_token": "outlook_personal_token_here",
+        "refresh_token": "outlook_personal_refresh_token",
+        "account_email": "john.doe@outlook.com"
+      },
+      "sync_method": "api", 
+      "sync_direction": "bidirectional",
+      "enabled": true
+    },
+    {
+      "id": "microsoft_work_account",
+      "name": "John's Work Microsoft 365",
+      "provider_type": "microsoft", 
+      "calendars": [
+        "AQMkADAwATM0MDAAMS1iNzJjLWI8",
+        "AQMkADAwATM0MDAAMS1iNzJjLWI9"
+      ],
+      "credentials": {
+        "access_token": "m365_work_token_here", 
+        "refresh_token": "m365_work_refresh_token",
+        "account_email": "john@company.com"
+      },
+      "sync_method": "api",
+      "sync_direction": "bidirectional", 
+      "enabled": true
+    }
+  ],
+  "destination": {
+    "id": "unified_destination",
+    "name": "Unified Calendar",
+    "provider_type": "google",
+    "calendar_id": "unified@gmail.com",
+    "credentials": {
+      "access_token": "destination_token_here",
+      "refresh_token": "destination_refresh_token"
+    },
+    "conflict_resolution": "latest_wins",
+    "color_management": "separate_calendar",
+    "source_calendars": {
+      "google_work_account": "work_unified@gmail.com",
+      "google_personal_account": "personal_unified@gmail.com", 
+      "microsoft_personal_account": "outlook_unified@gmail.com",
+      "microsoft_work_account": "m365_unified@gmail.com"
+    }
+  }
+}

@@ -8,13 +8,7 @@ from auth.graph_adapter import GraphClient
 
 from utils.config import settings
 
-# OAuth scopes for Microsoft Graph Calendar access
-SCOPES = [
-    'Calendars.Read',
-    'Calendars.Read.Shared',
-    'offline_access',
-    'User.Read'
-]
+# OAuth scopes are now defined in settings
 
 
 # Dummy Microsoft Graph client for when credentials aren't available
@@ -80,15 +74,21 @@ class MicrosoftGraphAuth:
         """Initialize Microsoft Graph authentication"""
         self.client_id = settings.MS_CLIENT_ID
         self.client_secret = settings.MS_CLIENT_SECRET
-        self.redirect_uri = settings.MS_REDIRECT_URI
-        self.default_tenant_id = settings.MS_TENANT_ID  # Default tenant ID
+        self.scopes = settings.MS_SCOPES
+        self.default_tenant_id = settings.MS_TENANT_ID
+        
+        # Use the dynamic redirect URI from settings
+        self.redirect_uri = settings.microsoft_redirect_uri
 
-        # Instead of raising an error, just set a flag indicating we're in dummy mode
-        self.dummy_mode = not all([self.client_id, self.client_secret])
+        # Check if OAuth is properly configured
+        self.dummy_mode = not settings.microsoft_oauth_configured
         if self.dummy_mode:
             print("WARNING: Microsoft Graph API credentials not configured. Running in limited functionality mode.")
+            print(f"Expected redirect URI: {self.redirect_uri}")
+            print("Please set MS_CLIENT_ID and MS_CLIENT_SECRET in your .env file")
         else:
             print("Microsoft Graph authentication initialized successfully")
+            print(f"Using redirect URI: {self.redirect_uri}")
 
     def create_auth_url(self, tenant_id: Optional[str] = None) -> Dict[str, str]:
         """
@@ -114,7 +114,7 @@ class MicrosoftGraphAuth:
 
         # Generate authorization URL
         auth_url = app.get_authorization_request_url(
-            scopes=SCOPES,
+            scopes=self.scopes,
             redirect_uri=self.redirect_uri,
             state=tenant  # Store tenant ID in state for retrieval during callback
         )
@@ -150,7 +150,7 @@ class MicrosoftGraphAuth:
             # Exchange authorization code for tokens
             result = app.acquire_token_by_authorization_code(
                 code=code,
-                scopes=SCOPES,
+                scopes=self.scopes,
                 redirect_uri=self.redirect_uri
             )
 
@@ -204,7 +204,7 @@ class MicrosoftGraphAuth:
             # Acquire token with refresh token
             result = app.acquire_token_by_refresh_token(
                 refresh_token=refresh_token,
-                scopes=SCOPES
+                scopes=self.scopes
             )
 
             if "error" in result:

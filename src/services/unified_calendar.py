@@ -5,8 +5,8 @@ from datetime import datetime, timedelta
 
 from services.google_calendar import GoogleCalendarService
 from services.microsoft_calendar import MicrosoftCalendarService
-from services.apple_calendar import AppleCalendarService
-from services.exchange_calendar import ExchangeCalendarService
+from services.apple_calendar_enhanced import AppleCalendarService
+from services.exchange_calendar_enhanced import ExchangeCalendarService
 from services.caldav_client import CalDAVClient
 from services.calendar_event import CalendarEvent, CalendarProvider
 
@@ -24,7 +24,7 @@ class UnifiedCalendarService:
         self.google_service = GoogleCalendarService()
         self.microsoft_service = MicrosoftCalendarService()
         self.apple_service = AppleCalendarService()
-        self.exchange_service = ExchangeCalendarService()
+        # Exchange service will be initialized with config when needed
 
     async def list_all_calendars(self, user_credentials: Dict[str, Dict[str, Any]]) -> Dict[str, List[Dict[str, Any]]]:
         """
@@ -96,7 +96,7 @@ class UnifiedCalendarService:
     async def _get_apple_calendars(self, credentials: Dict[str, Any]) -> tuple:
         """Helper method to fetch Apple calendars"""
         try:
-            calendars = await self.apple_service.list_calendars(credentials)
+            calendars = await self.apple_service.list_calendars()
             return CalendarProvider.APPLE.value, calendars
         except Exception as e:
             logger.error(f"Error fetching Apple calendars: {e}")
@@ -105,11 +105,19 @@ class UnifiedCalendarService:
     async def _get_exchange_calendars(self, credentials: Dict[str, Any]) -> tuple:
         """Helper method to fetch Exchange/Mailcow calendars"""
         try:
-            # First authenticate with the Exchange server
-            auth_info = await self.exchange_service.authenticate(credentials)
-
-            # Then list the calendars
-            calendars = await self.exchange_service.list_calendars(auth_info)
+            # Initialize Exchange service with config from credentials
+            from services.exchange_calendar_enhanced import ExchangeConfig
+            exchange_config = ExchangeConfig(
+                server_url=credentials.get('server_url', ''),
+                username=credentials.get('username', ''),
+                password=credentials.get('password', ''),
+                email=credentials.get('email', ''),
+                auth_type=credentials.get('auth_type', 'basic'),
+                verify_ssl=credentials.get('verify_ssl', True)
+            )
+            
+            exchange_service = ExchangeCalendarService(exchange_config)
+            calendars = await exchange_service.list_calendars()
             return CalendarProvider.EXCHANGE.value, calendars
         except Exception as e:
             logger.error(f"Error fetching Exchange calendars: {e}")
@@ -235,24 +243,19 @@ class UnifiedCalendarService:
             exchange_tokens = sync_tokens.get(
                 CalendarProvider.EXCHANGE.value, {})
 
-            # First authenticate with the Exchange server
-            try:
-                auth_info = await self.exchange_service.authenticate(exchange_creds)
-
-                for calendar_id in exchange_calendars:
-                    sync_token = exchange_tokens.get(calendar_id)
-                    tasks.append(
-                        self._get_exchange_events(
-                            auth_info,
-                            calendar_id,
-                            start_date,
-                            end_date,
-                            max_results_per_calendar,
-                            sync_token
-                        )
+            # Process Exchange calendars
+            for calendar_id in exchange_calendars:
+                sync_token = exchange_tokens.get(calendar_id)
+                tasks.append(
+                    self._get_exchange_events(
+                        exchange_creds,
+                        calendar_id,
+                        start_date,
+                        end_date,
+                        max_results_per_calendar,
+                        sync_token
                     )
-            except Exception as e:
-                logger.error(f"Error authenticating with Exchange server: {e}")
+                )
 
         # Execute all tasks concurrently
         all_events = []
@@ -364,20 +367,18 @@ class UnifiedCalendarService:
     ) -> tuple:
         """Helper method to fetch Apple events"""
         try:
-            result = await self.apple_service.get_events(
-                token_info=credentials,
+            events = await self.apple_service.get_events(
                 calendar_id=calendar_id,
                 start_date=start_date,
                 end_date=end_date,
-                max_results=max_results,
-                delta_link=delta_link
+                max_results=max_results
             )
 
             return (
                 CalendarProvider.APPLE.value,
                 calendar_id,
-                result.get('events', []),
-                result.get('deltaLink')
+                events,
+                None  # Apple Calendar doesn't use delta links
             )
         except Exception as e:
             logger.error(
@@ -386,7 +387,7 @@ class UnifiedCalendarService:
 
     async def _get_exchange_events(
         self,
-        auth_info: Dict[str, Any],
+        credentials: Dict[str, Any],
         calendar_id: str,
         start_date: datetime,
         end_date: datetime,
@@ -395,20 +396,30 @@ class UnifiedCalendarService:
     ) -> tuple:
         """Helper method to fetch Exchange/Mailcow events"""
         try:
-            result = await self.exchange_service.get_events(
-                auth_info=auth_info,
+            # Initialize Exchange service with config from credentials
+            from services.exchange_calendar_enhanced import ExchangeConfig
+            exchange_config = ExchangeConfig(
+                server_url=credentials.get('server_url', ''),
+                username=credentials.get('username', ''),
+                password=credentials.get('password', ''),
+                email=credentials.get('email', ''),
+                auth_type=credentials.get('auth_type', 'basic'),
+                verify_ssl=credentials.get('verify_ssl', True)
+            )
+            
+            exchange_service = ExchangeCalendarService(exchange_config)
+            events = await exchange_service.get_events(
                 calendar_id=calendar_id,
                 start_date=start_date,
                 end_date=end_date,
-                max_results=max_results,
-                sync_token=sync_token
+                max_results=max_results
             )
 
             return (
                 CalendarProvider.EXCHANGE.value,
                 calendar_id,
-                result.get('events', []),
-                result.get('syncToken')
+                events,
+                None  # We can add sync token support later if needed
             )
         except Exception as e:
             logger.error(

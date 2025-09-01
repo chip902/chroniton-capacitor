@@ -9,11 +9,7 @@ from googleapiclient.errors import HttpError
 
 from utils.config import settings
 
-# OAuth scope for Google Calendar API (including write permissions for sync)
-SCOPES = [
-    'https://www.googleapis.com/auth/calendar',
-    'https://www.googleapis.com/auth/calendar.events'
-]
+# OAuth scopes are now defined in settings
 
 # Dummy calendar service for when credentials aren't available
 
@@ -71,14 +67,20 @@ class GoogleCalendarAuth:
         """Initialize Google Calendar authentication"""
         self.client_id = settings.GOOGLE_CLIENT_ID
         self.client_secret = settings.GOOGLE_CLIENT_SECRET
-        self.redirect_uri = settings.GOOGLE_REDIRECT_URI
+        self.scopes = settings.GOOGLE_SCOPES
+        
+        # Use the dynamic redirect URI from settings
+        self.redirect_uri = settings.google_redirect_uri
 
-        # Instead of raising an error, just set a flag indicating we're in dummy mode
-        self.dummy_mode = not all([self.client_id, self.client_secret])
+        # Check if OAuth is properly configured
+        self.dummy_mode = not settings.google_oauth_configured
         if self.dummy_mode:
             print("WARNING: Google Calendar API credentials not configured. Running in limited functionality mode.")
+            print(f"Expected redirect URI: {self.redirect_uri}")
+            print("Please set GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET in your .env file")
         else:
             print("Google Calendar authentication initialized successfully")
+            print(f"Using redirect URI: {self.redirect_uri}")
 
     def create_auth_url(self, tenant_id: Optional[str] = None, redirect_uri: Optional[str] = None) -> Dict[str, str]:
         """
@@ -104,7 +106,7 @@ class GoogleCalendarAuth:
                     "redirect_uris": [actual_redirect_uri]
                 }
             },
-            scopes=SCOPES
+            scopes=self.scopes
         )
 
         # Set redirect URI to the actual one we want to use
@@ -146,7 +148,7 @@ class GoogleCalendarAuth:
                         "redirect_uris": [actual_redirect_uri]
                     }
                 },
-                scopes=SCOPES
+                scopes=self.scopes
             )
 
             # IMPORTANT: Use the same redirect_uri that was used for auth URL creation
@@ -182,7 +184,7 @@ class GoogleCalendarAuth:
                 token_uri="https://oauth2.googleapis.com/token",
                 client_id="dummy-client-id",
                 client_secret="dummy-client-secret",
-                scopes=SCOPES
+                scopes=self.scopes
             )
 
         return Credentials(
@@ -191,7 +193,7 @@ class GoogleCalendarAuth:
             token_uri="https://oauth2.googleapis.com/token",
             client_id=self.client_id,
             client_secret=self.client_secret,
-            scopes=SCOPES
+            scopes=self.scopes
         )
 
     async def get_calendar_service(self, token_info: Dict[str, str]) -> Any:

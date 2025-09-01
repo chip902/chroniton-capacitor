@@ -60,14 +60,32 @@ class Settings(BaseSettings):
     # Google Calendar settings
     GOOGLE_CLIENT_ID: str = ""
     GOOGLE_CLIENT_SECRET: str = ""
-    GOOGLE_REDIRECT_URI: str = "http://localhost:8000/api/auth/google/callback"
+    GOOGLE_REDIRECT_URI: str = ""  # Will be auto-generated based on environment
+    GOOGLE_SCOPES: List[str] = [
+        "https://www.googleapis.com/auth/calendar",
+        "https://www.googleapis.com/auth/calendar.events",
+        "https://www.googleapis.com/auth/calendar.readonly",
+        "https://www.googleapis.com/auth/calendar.events.readonly"
+    ]
 
     # Microsoft Graph settings
     MS_CLIENT_ID: str = ""
     MS_CLIENT_SECRET: str = ""
-    MS_REDIRECT_URI: str = "http://localhost:8000/api/auth/microsoft/callback"
+    MS_REDIRECT_URI: str = ""  # Will be auto-generated based on environment
     MS_TENANT_ID: str = "common"
     MS_AUTHORITY: str = "https://login.microsoftonline.com/common"
+    MS_SCOPES: List[str] = [
+        "Calendars.Read",
+        "Calendars.Read.Shared", 
+        "Calendars.ReadWrite",
+        "Calendars.ReadWrite.Shared",
+        "offline_access",
+        "User.Read"
+    ]
+
+    # OAuth settings
+    OAUTH_STATE_SECRET: str = Field("oauth_state_secret_change_in_production", min_length=16)
+    OAUTH_SESSION_TIMEOUT_MINUTES: int = 30
 
     # Redis settings for caching
     REDIS_HOST: str = "redis"
@@ -116,6 +134,40 @@ class Settings(BaseSettings):
     @property
     def is_development(self) -> bool:
         return self.ENVIRONMENT.lower() == "development"
+
+    @property
+    def base_url(self) -> str:
+        """Get the base URL for the application"""
+        if self.is_production:
+            # In production, this should be set explicitly or derived from environment
+            return f"https://{self.API_HOST}:{self.API_PORT}"
+        else:
+            # In development, use localhost
+            return f"http://localhost:{self.API_PORT}"
+
+    @property
+    def google_redirect_uri(self) -> str:
+        """Get the Google OAuth redirect URI"""
+        if self.GOOGLE_REDIRECT_URI:
+            return self.GOOGLE_REDIRECT_URI
+        return f"{self.base_url}/api/auth/google/callback"
+
+    @property
+    def microsoft_redirect_uri(self) -> str:
+        """Get the Microsoft OAuth redirect URI"""
+        if self.MS_REDIRECT_URI:
+            return self.MS_REDIRECT_URI
+        return f"{self.base_url}/api/auth/microsoft/callback"
+
+    @property
+    def google_oauth_configured(self) -> bool:
+        """Check if Google OAuth is properly configured"""
+        return bool(self.GOOGLE_CLIENT_ID and self.GOOGLE_CLIENT_SECRET)
+
+    @property
+    def microsoft_oauth_configured(self) -> bool:
+        """Check if Microsoft OAuth is properly configured"""
+        return bool(self.MS_CLIENT_ID and self.MS_CLIENT_SECRET)
 
     class Config:
         env_file = ".env"

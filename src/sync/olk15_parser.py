@@ -95,7 +95,7 @@ class OLK15EventParser:
         """Count .olk15Event files in directory"""
         try:
             return len([f for f in os.listdir(account_dir) if f.endswith('.olk15Event')])
-        except:
+        except (OSError, FileNotFoundError):
             return 0
 
     def get_events_for_account(self, account_dir: str, days_back: int = 30, days_forward: int = 90) -> List[Dict[str, Any]]:
@@ -211,27 +211,73 @@ class OLK15EventParser:
         return match.group(0) if match else ''
 
     def _extract_title(self, content: str) -> str:
-        """Extract event title/subject"""
-        # Try multiple patterns to find the title
-
-        # Look for common title indicators
+        """Extract event title/subject with enhanced patterns"""
+        # Priority patterns - most specific first
         title_patterns = [
+            # Standard calendar fields
             r'Subject:\s*([^\n\r]+)',
             r'SUMMARY:([^\n\r]+)',
-            r'"title":\s*"([^"]+)"',
+            r'"?subject"?\s*[:=]\s*"([^"]+)"',
+            r'"?title"?\s*[:=]\s*"([^"]+)"',
+            r'"?summary"?\s*[:=]\s*"([^"]+)"',
+            
+            # Exchange/Outlook patterns
+            r'PR_SUBJECT[^:]*:\s*([^\n\r]+)',
+            r'MessageClass[^:]*Meeting.*Subject[^:]*:\s*([^\n\r]+)',
+            
+            # Calendar data patterns
+            r'BEGIN:VEVENT.*?SUMMARY:([^\n\r]+)',
+            r'EventTitle["\s]*[:=]["\s]*([^"\n\r]+)',
+            
+            # JSON-like patterns
+            r'"displayName":\s*"([^"]+)"',
+            r'"name":\s*"([^"]+)"',
+            
+            # Generic patterns
+            r'title["\s]*[:=]["\s]*([^"\n\r]+)',
+            r'name["\s]*[:=]["\s]*([^"\n\r]+)',
         ]
 
         for pattern in title_patterns:
-            match = re.search(pattern, content, re.IGNORECASE)
+            match = re.search(pattern, content, re.IGNORECASE | re.DOTALL)
             if match:
-                return match.group(1).strip()
+                title = match.group(1).strip()
+                # Clean up the title
+                title = re.sub(r'[\x00-\x1f\x7f-\x9f]', '', title)  # Remove control characters
+                title = re.sub(r'\s+', ' ', title)  # Normalize whitespace
+                
+                # Validate title quality
+                if (len(title) >= 3 and 
+                    len(title) <= 200 and  # Reasonable length
+                    '@' not in title and  # Not an email
+                    not title.isdigit() and  # Not just numbers
+                    not re.match(r'^[^\w]*$', title)):  # Not just punctuation
+                    return title
 
-        # Fallback: look for text near email addresses (often meeting titles)
-        email_context = re.search(
-            r'@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}[^a-zA-Z0-9@]*([A-Za-z][^\n\r]{5,50})', content)
-        if email_context:
-            potential_title = email_context.group(1).strip()
-            if len(potential_title) > 5 and not '@' in potential_title:
+        # Advanced fallback: look for text patterns that might be titles
+        # Look for text in quotes that could be event names
+        quoted_patterns = [
+            r'"([A-Za-z][^"]{5,100})"',  # Text in quotes
+            r"'([A-Za-z][^']{5,100})'",  # Text in single quotes
+        ]
+        
+        for pattern in quoted_patterns:
+            matches = re.findall(pattern, content)
+            for potential_title in matches:
+                potential_title = potential_title.strip()
+                if (len(potential_title) >= 5 and 
+                    '@' not in potential_title and
+                    not potential_title.lower().startswith(('http', 'www', 'ftp'))):
+                    return potential_title
+
+        # Look for capitalized words that could be meeting titles
+        capitalized_pattern = r'\b[A-Z][a-z]+(?:\s+[A-Z][a-z]+){1,6}\b'
+        matches = re.findall(capitalized_pattern, content)
+        for potential_title in matches:
+            potential_title = potential_title.strip()
+            if (len(potential_title) >= 8 and 
+                len(potential_title) <= 100 and
+                potential_title.count(' ') >= 1):  # Multi-word
                 return potential_title
 
         return "Untitled Event"
@@ -288,64 +334,181 @@ class OLK15EventParser:
         participants = []
         # Remove duplicates while preserving order
         seen = set()
-        for email in emails:
-            if email not in seen:
-                seen.add(email)
+        for email_addr in emails:
+            if email_addr not in seen:
+                seen.add(email_addr)
                 participants.append({
-                    'email': email,
-                    'name': email.split('@')[0],
+                    'email': email_addr,
+                    'name': email_addr.split('@')[0],
                     'status': 'accepted'  # Default status
                 })
 
         return participants
 
     def _extract_start_time(self, content: str, file_path: str) -> str:
-        """Extract event start time"""
-        # Try to find timezone and time information
-        timezone_pattern = r'[-+]\d{4}'
-        tz_match = re.search(timezone_pattern, content)
-
-        # For now, use file modification time as approximation
-        # This could be improved by parsing binary timestamp data
-        file_mtime = datetime.fromtimestamp(os.path.getmtime(file_path))
-
-        # Look for recurrence patterns that might contain time info
-        time_patterns = [
-            r'BYHOUR=(\d+)',
-            r'T(\d{6})Z',
-            r'(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})',
+        """Extract event start time with enhanced parsing"""
+        # Try different timestamp extraction methods
+        
+        # Method 1: Look for ISO datetime strings
+        iso_patterns = [
+            r'(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{3})?(?:Z|[+-]\d{2}:\d{2})?)',
+            r'DTSTART[^:]*:(\d{8}T\d{6}Z?)',
+            r'StartTime["\s]*[:=]["\s]*([^"\s\n\r]+)',
         ]
-
-        for pattern in time_patterns:
-            match = re.search(pattern, content)
+        
+        for pattern in iso_patterns:
+            match = re.search(pattern, content, re.IGNORECASE)
             if match:
                 try:
-                    # Try to construct a proper datetime
-                    if pattern == r'BYHOUR=(\d+)':
-                        hour = int(match.group(1))
-                        return file_mtime.replace(hour=hour).isoformat()
-                    elif pattern == r'T(\d{6})Z':
-                        time_str = match.group(1)
-                        hour = int(time_str[:2])
-                        minute = int(time_str[2:4])
-                        return file_mtime.replace(hour=hour, minute=minute).isoformat()
-                except:
+                    time_str = match.group(1)
+                    # Handle different formats
+                    if 'T' in time_str and len(time_str) >= 15:
+                        if time_str.endswith('Z'):
+                            # UTC time
+                            dt = datetime.fromisoformat(time_str.replace('Z', '+00:00'))
+                        elif '+' in time_str or time_str.count('-') > 2:
+                            # Timezone aware
+                            dt = datetime.fromisoformat(time_str)
+                        else:
+                            # No timezone, assume local
+                            dt = datetime.fromisoformat(time_str)
+                        return dt.isoformat()
+                    elif len(time_str) == 15:  # YYYYMMDDTHHMMSS format
+                        dt = datetime.strptime(time_str.rstrip('Z'), '%Y%m%dT%H%M%S')
+                        return dt.isoformat()
+                except (ValueError, IndexError) as e:
+                    logger.debug(f"Failed to parse timestamp '{time_str}': {e}")
                     continue
 
-        # Default to file modification time
-        return file_mtime.isoformat()
+        # Method 2: Look for Unix timestamps or other numeric formats
+        timestamp_patterns = [
+            r'timestamp["\s]*[:=]["\s]*(\d{10,13})',  # Unix timestamp
+            r'StartTime["\s]*[:=]["\s]*(\d{10,13})',
+            r'time["\s]*[:=]["\s]*(\d{10,13})',
+        ]
+        
+        for pattern in timestamp_patterns:
+            match = re.search(pattern, content, re.IGNORECASE)
+            if match:
+                try:
+                    timestamp = int(match.group(1))
+                    # Handle both seconds and milliseconds
+                    if timestamp > 1000000000000:  # Milliseconds
+                        timestamp = timestamp / 1000
+                    dt = datetime.fromtimestamp(timestamp)
+                    return dt.isoformat()
+                except (ValueError, OSError) as e:
+                    logger.debug(f"Failed to parse timestamp {timestamp}: {e}")
+                    continue
+
+        # Method 3: Enhanced file-based time extraction
+        try:
+            file_mtime = datetime.fromtimestamp(os.path.getmtime(file_path))
+            
+            # Look for hour/minute hints in the content
+            time_hints = [
+                r'BYHOUR=(\d+)',
+                r'hour["\s]*[:=]["\s]*(\d{1,2})',
+                r'minute["\s]*[:=]["\s]*(\d{1,2})',
+            ]
+            
+            hour = file_mtime.hour
+            minute = file_mtime.minute
+            
+            for pattern in time_hints:
+                match = re.search(pattern, content, re.IGNORECASE)
+                if match:
+                    try:
+                        value = int(match.group(1))
+                        if 'hour' in pattern.lower() or 'HOUR' in pattern:
+                            if 0 <= value <= 23:
+                                hour = value
+                        elif 'minute' in pattern.lower():
+                            if 0 <= value <= 59:
+                                minute = value
+                    except ValueError:
+                        continue
+            
+            return file_mtime.replace(hour=hour, minute=minute).isoformat()
+            
+        except OSError as e:
+            logger.warning(f"Could not get file modification time for {file_path}: {e}")
+            
+        # Final fallback: current time
+        return datetime.now().isoformat()
 
     def _extract_end_time(self, content: str, file_path: str) -> str:
-        """Extract event end time"""
-        start_time = self._extract_start_time(content, file_path)
+        """Extract event end time with enhanced parsing"""
+        # First try to find explicit end time patterns
+        end_patterns = [
+            r'(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{3})?(?:Z|[+-]\d{2}:\d{2})?).*end',
+            r'DTEND[^:]*:(\d{8}T\d{6}Z?)',
+            r'EndTime["\s]*[:=]["\s]*([^"\s\n\r]+)',
+            r'end["\s]*[:=]["\s]*([^"\s\n\r]+)',
+        ]
+        
+        for pattern in end_patterns:
+            match = re.search(pattern, content, re.IGNORECASE)
+            if match:
+                try:
+                    time_str = match.group(1)
+                    if 'T' in time_str and len(time_str) >= 15:
+                        if time_str.endswith('Z'):
+                            dt = datetime.fromisoformat(time_str.replace('Z', '+00:00'))
+                        elif '+' in time_str or time_str.count('-') > 2:
+                            dt = datetime.fromisoformat(time_str)
+                        else:
+                            dt = datetime.fromisoformat(time_str)
+                        return dt.isoformat()
+                    elif len(time_str) == 15:
+                        dt = datetime.strptime(time_str.rstrip('Z'), '%Y%m%dT%H%M%S')
+                        return dt.isoformat()
+                except (ValueError, IndexError) as e:
+                    logger.debug(f"Failed to parse end time '{time_str}': {e}")
+                    continue
+        
+        # Look for duration indicators
+        duration_patterns = [
+            r'duration["\s]*[:=]["\s]*(\d+)',  # Duration in minutes
+            r'DURATION:PT(\d+)([HM])',  # ISO duration format
+        ]
+        
+        for pattern in duration_patterns:
+            match = re.search(pattern, content, re.IGNORECASE)
+            if match:
+                try:
+                    duration_value = int(match.group(1))
+                    if len(match.groups()) > 1:
+                        unit = match.group(2).upper()
+                        if unit == 'H':
+                            duration_value *= 60  # Convert hours to minutes
+                    
+                    start_time = self._extract_start_time(content, file_path)
+                    start_dt = datetime.fromisoformat(start_time.replace('Z', '+00:00').replace('+00:00', ''))
+                    end_dt = start_dt + timedelta(minutes=duration_value)
+                    return end_dt.isoformat()
+                except (ValueError, IndexError) as e:
+                    logger.debug(f"Failed to parse duration: {e}")
+                    continue
+        
+        # Fallback: calculate from start time with default duration
         try:
-            start_dt = datetime.fromisoformat(
-                start_time.replace('Z', '+00:00').replace('+00:00', ''))
-            # Default to 1 hour duration
-            end_dt = start_dt + timedelta(hours=1)
+            start_time = self._extract_start_time(content, file_path)
+            start_dt = datetime.fromisoformat(start_time.replace('Z', '+00:00').replace('+00:00', ''))
+            
+            # Check if it looks like an all-day event (start time at midnight)
+            if start_dt.hour == 0 and start_dt.minute == 0:
+                # All-day event: end at 11:59 PM same day
+                end_dt = start_dt.replace(hour=23, minute=59, second=59)
+            else:
+                # Regular event: default to 1 hour duration
+                end_dt = start_dt + timedelta(hours=1)
+            
             return end_dt.isoformat()
-        except:
-            return start_time
+        except (ValueError, IndexError) as e:
+            logger.warning(f"Could not calculate end time from start time: {e}")
+            # Final fallback
+            return self._extract_start_time(content, file_path)
 
     def _is_all_day(self, content: str) -> bool:
         """Check if event is all day"""
