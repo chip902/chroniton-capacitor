@@ -58,10 +58,14 @@ def generate_state() -> str:
 def store_oauth_state(state: str, oauth_state: OAuthState) -> None:
     """Store OAuth state temporarily"""
     _oauth_states[state] = oauth_state
-    # Clean up old states (older than 30 minutes)
+    logger.info(f"Stored OAuth state for {state}: redirect_url={oauth_state.redirect_url}")
+    
+    # Clean up old states (older than 30 minutes) - but don't clear the one we just added!
     cutoff = datetime.utcnow() - timedelta(minutes=settings.OAUTH_SESSION_TIMEOUT_MINUTES)
-    _oauth_states.clear()  # Simple cleanup - in production use proper expiry
-    _oauth_states[state] = oauth_state
+    expired_states = [s for s, os in _oauth_states.items() if os.created_at < cutoff]
+    for expired_state in expired_states:
+        _oauth_states.pop(expired_state, None)
+    logger.info(f"OAuth state storage: {len(_oauth_states)} active states")
 
 def get_oauth_state(state: str) -> Optional[OAuthState]:
     """Retrieve OAuth state"""
@@ -235,8 +239,12 @@ async def google_callback(
             )
 
         # Verify state parameter
+        logger.info(f"Looking up OAuth state for: {state}")
         oauth_state = get_oauth_state(state)
+        logger.info(f"Found OAuth state: {oauth_state}")
+        
         if not oauth_state or oauth_state.provider != "google":
+            logger.error(f"Invalid OAuth state - oauth_state: {oauth_state}, provider: {oauth_state.provider if oauth_state else 'None'}")
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail="Invalid or expired state parameter"
@@ -245,6 +253,7 @@ async def google_callback(
         # Store redirect URL before removing state
         redirect_url = oauth_state.redirect_url
         tenant_id = oauth_state.tenant_id
+        logger.info(f"Using redirect_url: {redirect_url}")
 
         # Remove state after verification
         remove_oauth_state(state)
@@ -272,6 +281,7 @@ async def google_callback(
             logger.error(f"Failed to create sync source from OAuth tokens: {e}")
         
         # If there's a redirect URL, redirect with tokens (for frontend integration)
+        logger.info(f"Checking redirect_url: {redirect_url}")
         if redirect_url:
             # In production, you might want to store tokens securely and redirect with a session ID
             redirect_params = urlencode({
@@ -279,7 +289,11 @@ async def google_callback(
                 "success": "true",
                 "access_token": tokens["access_token"][:50] + "...",  # Truncated for security
             })
-            return RedirectResponse(url=f"{redirect_url}?{redirect_params}")
+            final_redirect_url = f"{redirect_url}?{redirect_params}"
+            logger.info(f"Redirecting to: {final_redirect_url}")
+            return RedirectResponse(url=final_redirect_url)
+        else:
+            logger.info("No redirect_url found, returning JSON response")
         
         # Return success message instead of raw token info
         return {
