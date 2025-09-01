@@ -12,6 +12,23 @@ class CalendarProvider(str, Enum):
     EXCHANGE = "exchange"  # For Mailcow ActiveSync
 
 
+class CalendarCredentials(BaseModel):
+    """Common model for calendar provider credentials"""
+    provider: CalendarProvider
+    token_type: str = "Bearer"
+    access_token: str
+    refresh_token: Optional[str] = None
+    expires_at: Optional[float] = None
+    tenant_id: Optional[str] = None  # For Microsoft multi-tenant
+    
+    def dict(self, **kwargs) -> Dict[str, Any]:
+        """Convert to dict, handling enum serialization"""
+        data = super().dict(**kwargs)
+        if isinstance(data.get("provider"), CalendarProvider):
+            data["provider"] = data["provider"].value
+        return data
+
+
 class EventParticipant(BaseModel):
     """Common model for event participants across providers"""
     email: Optional[str] = None
