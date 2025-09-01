@@ -836,8 +836,8 @@ async def sync_single_source(
 @router.post("/import/{source_id}")
 async def import_events(
     source_id: str,
-    events: List[Dict[str, Any]] = Body(...),
     background_tasks: BackgroundTasks,
+    events: List[Dict[str, Any]] = Body(...),
     controller: CalendarSyncController = Depends(get_sync_controller)
 ):
     """Import events for a specific source"""
