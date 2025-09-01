@@ -48,14 +48,8 @@ async def google_auth_url(
     return google_auth.create_auth_url(tenant_id, redirect_uri)
 
 
-@router.get("/auth/google/callback")
-async def google_auth_callback(
-    code: str,
-    redirect_uri: Optional[str] = None
-):
-    """Handle Google OAuth callback and exchange code for tokens"""
-    token_info = await google_auth.exchange_code(code, redirect_uri)
-    return token_info
+# NOTE: Google OAuth callback moved to oauth_router.py
+# This old callback was conflicting with the new one that supports redirects
 
 
 @router.get("/auth/microsoft")
