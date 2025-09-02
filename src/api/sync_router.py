@@ -993,7 +993,14 @@ async def get_all_events(
                             # Get events from this OAuth source
                             source_events = await controller._get_events_from_api_source(source)
                             for event in source_events:
-                                event_copy = event.copy() if hasattr(event, 'copy') else dict(event)
+                                # Convert CalendarEvent to dict
+                                if hasattr(event, 'dict'):
+                                    event_copy = event.dict()
+                                elif hasattr(event, 'copy'):
+                                    event_copy = event.copy()
+                                else:
+                                    event_copy = dict(event)
+                                
                                 event_copy["source_id"] = source.id
                                 event_copy["source_name"] = source.name
                                 event_copy["source_type"] = "oauth"
@@ -1070,26 +1077,34 @@ async def get_events_fullcalendar_format(
                         # Get events from this OAuth source
                         source_events = await controller._get_events_from_api_source(source)
                         for event in source_events:
+                            # Convert CalendarEvent to dict first
+                            if hasattr(event, 'dict'):
+                                event_dict = event.dict()
+                            elif hasattr(event, 'copy'):
+                                event_dict = event.copy()
+                            else:
+                                event_dict = dict(event)
+                            
                             # Convert to FullCalendar format
                             fc_event = {
-                                "id": event.get("id", f"oauth_{source.id}_{event.get('summary', 'event')}"),
-                                "title": event.get("summary", event.get("title", "Untitled Event")),
-                                "start": event.get("start", {}).get("dateTime") or event.get("start", {}).get("date") or event.get("start_time"),
-                                "end": event.get("end", {}).get("dateTime") or event.get("end", {}).get("date") or event.get("end_time"),
-                                "allDay": bool(event.get("start", {}).get("date")) or event.get("all_day", False),
+                                "id": event_dict.get("id", f"oauth_{source.id}_{event_dict.get('title', 'event')}"),
+                                "title": event_dict.get("title", "Untitled Event"),
+                                "start": event_dict.get("start_time"),
+                                "end": event_dict.get("end_time"),
+                                "allDay": event_dict.get("all_day", False),
                                 "backgroundColor": get_source_color(source.id),
                                 "borderColor": get_source_color(source.id),
                                 "extendedProps": {
-                                    "description": event.get("description", ""),
-                                    "location": event.get("location", ""),
+                                    "description": event_dict.get("description", ""),
+                                    "location": event_dict.get("location", ""),
                                     "provider": source.provider_type,
-                                    "calendar_name": event.get("calendar_name", source.name),
+                                    "calendar_name": event_dict.get("calendar_name", source.name),
                                     "source_name": source.name,
                                     "source_id": source.id,
                                     "source_type": "oauth",
-                                    "status": event.get("status", "confirmed"),
-                                    "organizer": event.get("organizer", {}),
-                                    "attendees": event.get("attendees", [])
+                                    "status": event_dict.get("status", "confirmed"),
+                                    "organizer": event_dict.get("organizer", {}),
+                                    "participants": event_dict.get("participants", [])
                                 }
                             }
                             all_events.append(fc_event)
