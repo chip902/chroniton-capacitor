@@ -112,15 +112,25 @@ class MicrosoftGraphAuth:
             client_credential=self.client_secret
         )
 
-        # Generate authorization URL
+        # Generate authorization URL manually to avoid MSAL's internal scope issues
+        from urllib.parse import urlencode
+        
         # Ensure scopes is a list, not a frozenset
         scopes_list = list(self.scopes) if not isinstance(self.scopes, list) else self.scopes
         print(f"DEBUG: scopes type: {type(scopes_list)}, scopes value: {scopes_list}")
-        auth_url = app.get_authorization_request_url(
-            scopes=scopes_list,
-            redirect_uri=self.redirect_uri,
-            state=tenant  # Store tenant ID in state for retrieval during callback
-        )
+        
+        # Build authorization URL manually to avoid MSAL frozenset issues
+        auth_params = {
+            'client_id': self.client_id,
+            'response_type': 'code',
+            'redirect_uri': self.redirect_uri,
+            'scope': ' '.join(scopes_list),  # Join scopes with spaces
+            'state': tenant,
+            'response_mode': 'query'
+        }
+        
+        authority_url = f"https://login.microsoftonline.com/{tenant}"
+        auth_url = f"{authority_url}/oauth2/v2.0/authorize?{urlencode(auth_params)}"
 
         return {"auth_url": auth_url}
 
