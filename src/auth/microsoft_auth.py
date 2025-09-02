@@ -113,8 +113,11 @@ class MicrosoftGraphAuth:
         )
 
         # Generate authorization URL
+        # Ensure scopes is a list, not a frozenset
+        scopes_list = list(self.scopes) if not isinstance(self.scopes, list) else self.scopes
+        print(f"DEBUG: scopes type: {type(scopes_list)}, scopes value: {scopes_list}")
         auth_url = app.get_authorization_request_url(
-            scopes=self.scopes,
+            scopes=scopes_list,
             redirect_uri=self.redirect_uri,
             state=tenant  # Store tenant ID in state for retrieval during callback
         )
@@ -148,9 +151,11 @@ class MicrosoftGraphAuth:
             )
 
             # Exchange authorization code for tokens
+            # Ensure scopes is a list, not a frozenset
+            scopes_list = list(self.scopes) if not isinstance(self.scopes, list) else self.scopes
             result = app.acquire_token_by_authorization_code(
                 code=code,
-                scopes=self.scopes,
+                scopes=scopes_list,
                 redirect_uri=self.redirect_uri
             )
 
