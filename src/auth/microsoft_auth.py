@@ -131,7 +131,10 @@ class MicrosoftGraphAuth:
         
         authority_url = f"https://login.microsoftonline.com/{tenant}"
         auth_url = f"{authority_url}/oauth2/v2.0/authorize?{urlencode(auth_params)}"
-
+        
+        print(f"DEBUG: Generated Microsoft auth URL: {auth_url}")
+        print(f"DEBUG: Redirect URI in request: {self.redirect_uri}")
+        
         return {"auth_url": auth_url}
 
     async def exchange_code(self, code: str, tenant_id: Optional[str] = None) -> Dict[str, str]:
