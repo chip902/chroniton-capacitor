@@ -992,6 +992,7 @@ async def get_all_events(
                         try:
                             # Get events from this OAuth source
                             source_events = await controller._get_events_from_api_source(source)
+                            logger.info(f"Got {len(source_events)} events from source {source.id} ({source.name})")
                             for event in source_events:
                                 # Convert CalendarEvent to dict
                                 if hasattr(event, 'dict'):

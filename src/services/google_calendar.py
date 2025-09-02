@@ -65,7 +65,7 @@ class GoogleCalendarService:
         calendar_id: str,
         start_date: Optional[datetime] = None,
         end_date: Optional[datetime] = None,
-        max_results: int = 100,
+        max_results: int = 2500,
         sync_token: Optional[str] = None
     ) -> Dict[str, Any]:
         """

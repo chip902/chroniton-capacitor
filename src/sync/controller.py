@@ -368,7 +368,9 @@ class CalendarSyncController:
                         end_date=end_date,
                         sync_token=sync_token
                     )
-                    events.extend(result.get('events', []))
+                    calendar_events = result.get('events', [])
+                    logger.info(f"Calendar {calendar_id}: got {len(calendar_events)} events")
+                    events.extend(calendar_events)
 
                     # Update sync token
                     if result.get('nextSyncToken'):
