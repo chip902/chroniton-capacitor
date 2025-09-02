@@ -985,7 +985,8 @@ async def get_all_events(
                     event_copy["source_type"] = "agent"
                     all_events.append(event_copy)
             
-            # ALSO get events from OAuth sync sources with deduplication
+            # ALSO get events from OAuth sync sources with content-based deduplication
+            seen_event_keys = set()  # Track unique events by content
             try:
                 config = await controller.load_configuration()
                 for source in config.sources:
@@ -995,7 +996,7 @@ async def get_all_events(
                             source_events = await controller._get_events_from_api_source(source)
                             logger.info(f"Got {len(source_events)} events from source {source.id} ({source.name})")
                             
-                            # Deduplicate events
+                            # Deduplicate events by content (title + start_time + end_time)
                             unique_events = []
                             for event in source_events:
                                 # Convert CalendarEvent to dict
@@ -1006,25 +1007,20 @@ async def get_all_events(
                                 else:
                                     event_copy = dict(event)
                                 
-                                # Check for duplicates using provider_id
-                                provider_id = event_copy.get('provider_id', '')
-                                if provider_id and provider_id not in seen_provider_ids:
-                                    seen_provider_ids.add(provider_id)
+                                # Create unique key based on content, not provider_id
+                                event_key = f"{event_copy.get('title', '')}|{event_copy.get('start_time', '')}|{event_copy.get('end_time', '')}"
+                                
+                                if event_key not in seen_event_keys:
+                                    seen_event_keys.add(event_key)
                                     event_copy["source_id"] = source.id
                                     event_copy["source_name"] = source.name
                                     event_copy["source_type"] = "oauth"
                                     event_copy["provider"] = source.provider_type
                                     unique_events.append(event_copy)
-                                elif not provider_id:
-                                    # If no provider_id, include it but log warning
-                                    logger.warning(f"Event without provider_id: {event_copy.get('title', 'Unknown')}")
-                                    event_copy["source_id"] = source.id
-                                    event_copy["source_name"] = source.name
-                                    event_copy["source_type"] = "oauth"
-                                    event_copy["provider"] = source.provider_type
-                                    unique_events.append(event_copy)
+                                else:
+                                    logger.debug(f"Skipping duplicate event: {event_copy.get('title', 'Unknown')} at {event_copy.get('start_time', '')}")
                             
-                            logger.info(f"After deduplication: {len(unique_events)} unique events from source {source.id}")
+                            logger.info(f"After content deduplication: {len(unique_events)} unique events from source {source.id}")
                             all_events.extend(unique_events)
                         except Exception as e:
                             logger.warning(f"Failed to get events from source {source.id}: {e}")
@@ -1040,7 +1036,7 @@ async def get_all_events(
                 "total_events": len(all_events),
                 "agents": list(stored_events.keys()),
                 "oauth_sources": len(config.sources) if 'config' in locals() else 0,
-                "duplicate_count": len(source_events) - len(unique_events) if 'source_events' in locals() and 'unique_events' in locals() else 0
+                "deduplicated_events": len(all_events)
             }
 
     except Exception as e:
@@ -1089,8 +1085,8 @@ async def get_events_fullcalendar_format(
                 }
                 all_events.append(fc_event)
 
-        # ALSO add OAuth sync source events with deduplication
-        seen_provider_ids = set()  # Track unique events by provider ID
+        # ALSO add OAuth sync source events with content-based deduplication
+        seen_event_keys = set()  # Track unique events by content
         try:
             config = await controller.load_configuration()
             for source in config.sources:
@@ -1100,7 +1096,7 @@ async def get_events_fullcalendar_format(
                         source_events = await controller._get_events_from_api_source(source)
                         logger.info(f"Got {len(source_events)} events from source {source.id} for fullcalendar")
                         
-                        # Deduplicate events
+                        # Deduplicate events by content
                         unique_count = 0
                         for event in source_events:
                             # Convert CalendarEvent to dict first
@@ -1111,10 +1107,11 @@ async def get_events_fullcalendar_format(
                             else:
                                 event_dict = dict(event)
                             
-                            # Check for duplicates using provider_id
-                            provider_id = event_dict.get('provider_id', '')
-                            if provider_id and provider_id not in seen_provider_ids:
-                                seen_provider_ids.add(provider_id)
+                            # Create unique key based on content, not provider_id
+                            event_key = f"{event_dict.get('title', '')}|{event_dict.get('start_time', '')}|{event_dict.get('end_time', '')}"
+                            
+                            if event_key not in seen_event_keys:
+                                seen_event_keys.add(event_key)
                                 unique_count += 1
                                 
                                 # Convert to FullCalendar format
@@ -1140,9 +1137,9 @@ async def get_events_fullcalendar_format(
                                     }
                                 }
                                 all_events.append(fc_event)
-                            elif not provider_id:
-                                # Log warning for events without provider_id
-                                logger.warning(f"Event without provider_id in fullcalendar: {event_dict.get('title', 'Unknown')}")
+                            else:
+                                # Log that we skipped a duplicate
+                                logger.debug(f"Skipping duplicate event in fullcalendar: {event_dict.get('title', 'Unknown')}")
                         
                         logger.info(f"After deduplication: {unique_count} unique events from source {source.id} for fullcalendar")
                     except Exception as e:

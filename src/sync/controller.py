@@ -347,9 +347,9 @@ class CalendarSyncController:
             self.active_syncs.discard(source_id)
 
     async def _get_events_from_api_source(self, source: SyncSource) -> List[CalendarEvent]:
-        """Get events from a source using direct API access with deduplication"""
+        """Get events from a source using direct API access with content-based deduplication"""
         events = []
-        seen_provider_ids = set()  # Track unique events by provider ID
+        seen_event_keys = set()  # Track unique events by content (title + time)
 
         # Determine date range for sync - reduced to 14 days to prevent hanging
         start_date = datetime.utcnow().replace(
@@ -376,19 +376,21 @@ class CalendarSyncController:
                     calendar_events = result.get('events', [])
                     logger.info(f"Calendar {calendar_id}: got {len(calendar_events)} events")
                     
-                    # Deduplicate events by provider_id
+                    # Deduplicate events by content (title + start_time + end_time)
                     unique_events = []
                     for event in calendar_events:
-                        provider_id = event.provider_id if hasattr(event, 'provider_id') else None
-                        if provider_id and provider_id not in seen_provider_ids:
-                            seen_provider_ids.add(provider_id)
+                        event_title = event.title if hasattr(event, 'title') else 'Unknown'
+                        event_start = str(event.start_time) if hasattr(event, 'start_time') else ''
+                        event_end = str(event.end_time) if hasattr(event, 'end_time') else ''
+                        event_key = f"{event_title}|{event_start}|{event_end}"
+                        
+                        if event_key not in seen_event_keys:
+                            seen_event_keys.add(event_key)
                             unique_events.append(event)
-                        elif not provider_id:
-                            # Log warning but include event
-                            logger.warning(f"Event without provider_id: {event.title if hasattr(event, 'title') else 'Unknown'}")
-                            unique_events.append(event)
+                        else:
+                            logger.debug(f"Skipping duplicate event: {event_title} at {event_start}")
                     
-                    logger.info(f"Calendar {calendar_id}: {len(unique_events)} unique events after deduplication")
+                    logger.info(f"Calendar {calendar_id}: {len(unique_events)} unique events after content deduplication")
                     events.extend(unique_events)
 
                     # Update sync token
