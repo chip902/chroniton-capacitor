@@ -959,10 +959,16 @@ async def sync_health_check():
 
 
 @router.get("/events")
-async def get_all_events(agent_id: Optional[str] = None):
-    """Get all imported events, optionally filtered by agent"""
+async def get_all_events(
+    agent_id: Optional[str] = None,
+    controller: CalendarSyncController = Depends(get_sync_controller)
+):
+    """Get all imported events, optionally filtered by agent. Includes both agent events and OAuth sync source events."""
     try:
+        all_events = []
+        
         if agent_id:
+            # Only return events for specific agent
             events = stored_events.get(agent_id, [])
             return {
                 "events": events,
@@ -971,12 +977,33 @@ async def get_all_events(agent_id: Optional[str] = None):
             }
         else:
             # Get all events from all agents
-            all_events = []
             for aid, events in stored_events.items():
                 for event in events:
                     event_copy = event.copy()
                     event_copy["source_agent"] = aid
+                    event_copy["source_type"] = "agent"
                     all_events.append(event_copy)
+            
+            # ALSO get events from OAuth sync sources
+            try:
+                config = await controller.load_configuration()
+                for source in config.sources:
+                    if source.credentials and source.enabled:
+                        try:
+                            # Get events from this OAuth source
+                            source_events = await controller._get_events_from_api_source(source)
+                            for event in source_events:
+                                event_copy = event.copy() if hasattr(event, 'copy') else dict(event)
+                                event_copy["source_id"] = source.id
+                                event_copy["source_name"] = source.name
+                                event_copy["source_type"] = "oauth"
+                                event_copy["provider"] = source.provider_type
+                                all_events.append(event_copy)
+                        except Exception as e:
+                            logger.warning(f"Failed to get events from source {source.id}: {e}")
+                            continue
+            except Exception as e:
+                logger.warning(f"Failed to load OAuth sync sources: {e}")
 
             # Sort by start time
             all_events.sort(key=lambda x: x.get("start_time", ""))
@@ -984,7 +1011,8 @@ async def get_all_events(agent_id: Optional[str] = None):
             return {
                 "events": all_events,
                 "total_events": len(all_events),
-                "agents": list(stored_events.keys())
+                "agents": list(stored_events.keys()),
+                "oauth_sources": len(config.sources) if 'config' in locals() else 0
             }
 
     except Exception as e:
@@ -996,11 +1024,14 @@ async def get_all_events(agent_id: Optional[str] = None):
 
 
 @router.get("/events/fullcalendar")
-async def get_events_fullcalendar_format():
-    """Get events in FullCalendar format for the frontend"""
+async def get_events_fullcalendar_format(
+    controller: CalendarSyncController = Depends(get_sync_controller)
+):
+    """Get events in FullCalendar format for the frontend. Includes both agent and OAuth sync source events."""
     try:
         all_events = []
 
+        # Add agent events
         for agent_id, events in stored_events.items():
             agent_info = agent_status.get(agent_id, {})
             agent_name = agent_info.get("name", f"Agent {agent_id}")
@@ -1022,12 +1053,51 @@ async def get_events_fullcalendar_format():
                         "calendar_name": event.get("calendar_name", ""),
                         "agent_name": agent_name,
                         "agent_id": agent_id,
+                        "source_type": "agent",
                         "status": event.get("status", "confirmed"),
                         "organizer": event.get("organizer", {}),
                         "participants": event.get("participants", [])
                     }
                 }
                 all_events.append(fc_event)
+
+        # ALSO add OAuth sync source events
+        try:
+            config = await controller.load_configuration()
+            for source in config.sources:
+                if source.credentials and source.enabled:
+                    try:
+                        # Get events from this OAuth source
+                        source_events = await controller._get_events_from_api_source(source)
+                        for event in source_events:
+                            # Convert to FullCalendar format
+                            fc_event = {
+                                "id": event.get("id", f"oauth_{source.id}_{event.get('summary', 'event')}"),
+                                "title": event.get("summary", event.get("title", "Untitled Event")),
+                                "start": event.get("start", {}).get("dateTime") or event.get("start", {}).get("date") or event.get("start_time"),
+                                "end": event.get("end", {}).get("dateTime") or event.get("end", {}).get("date") or event.get("end_time"),
+                                "allDay": bool(event.get("start", {}).get("date")) or event.get("all_day", False),
+                                "backgroundColor": get_source_color(source.id),
+                                "borderColor": get_source_color(source.id),
+                                "extendedProps": {
+                                    "description": event.get("description", ""),
+                                    "location": event.get("location", ""),
+                                    "provider": source.provider_type,
+                                    "calendar_name": event.get("calendar_name", source.name),
+                                    "source_name": source.name,
+                                    "source_id": source.id,
+                                    "source_type": "oauth",
+                                    "status": event.get("status", "confirmed"),
+                                    "organizer": event.get("organizer", {}),
+                                    "attendees": event.get("attendees", [])
+                                }
+                            }
+                            all_events.append(fc_event)
+                    except Exception as e:
+                        logger.warning(f"Failed to get events from OAuth source {source.id}: {e}")
+                        continue
+        except Exception as e:
+            logger.warning(f"Failed to load OAuth sync sources for FullCalendar: {e}")
 
         return all_events
 
@@ -1055,6 +1125,24 @@ def get_agent_color(agent_id: str) -> str:
     # Use hash of agent_id to consistently assign colors
     hash_val = hash(agent_id) % len(colors)
     return colors[hash_val]
+
+
+def get_source_color(source_id: str) -> str:
+    """Get a consistent color for an OAuth sync source"""
+    oauth_colors = [
+        "#4285f4",  # Google Blue
+        "#0078d4",  # Microsoft Blue  
+        "#ff6b6b",  # Coral
+        "#4ecdc4",  # Teal
+        "#45b7d1",  # Sky Blue
+        "#96ceb4",  # Mint
+        "#feca57",  # Yellow
+        "#ff9ff3"   # Pink
+    ]
+
+    # Use hash of source_id to consistently assign colors
+    hash_val = hash(source_id) % len(oauth_colors)
+    return oauth_colors[hash_val]
 
 
 @router.delete("/events/{agent_id}")
