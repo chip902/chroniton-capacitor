@@ -135,17 +135,20 @@ async def create_sync_source_from_tokens(tokens: Dict[str, Any], tenant_id: Opti
         await controller.initialize()
         
         # Create sync source
-        from sync.architecture import SyncSource
+        from sync.architecture import SyncSource, SyncMethod
         
         source_id = f"google_oauth_{tenant_id or 'default'}"
         sync_source = SyncSource(
             id=source_id,
             name=f"Google Calendar OAuth ({len(selected_calendars)} calendars)",
             provider_type="google",
+            connection_info={
+                "api_base_url": "https://www.googleapis.com/calendar/v3",
+                "scopes": ["https://www.googleapis.com/auth/calendar"]
+            },
             credentials=credentials.dict(),
-            calendar_selections=calendar_selections,
-            sync_direction="bidirectional",
-            sync_method="incremental",
+            calendars=selected_calendars,
+            sync_method=SyncMethod.API,  # Use API method instead of "incremental"
             enabled=True
         )
         
