@@ -149,9 +149,14 @@ class GoogleCalendarService:
                     # No more pages, we're done
                     break
                 
-                # Safety check to prevent infinite loops
-                if total_fetched > 10000:
+                # Safety check to prevent infinite loops and hanging
+                if total_fetched > 500:  # Reduced from 10000 to 500 for safety
                     logger.warning(f"Stopping pagination after fetching {total_fetched} events to prevent excessive API calls")
+                    break
+                
+                # Also break if we're taking too long
+                if len(normalized_events) > 200:  # Stop if we already have many events from this calendar
+                    logger.info(f"Stopping early - already have {len(normalized_events)} events from this calendar")
                     break
             
             logger.info(f"Total events fetched from calendar {calendar_id}: {len(normalized_events)}")

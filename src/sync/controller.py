@@ -351,15 +351,19 @@ class CalendarSyncController:
         events = []
         seen_provider_ids = set()  # Track unique events by provider ID
 
-        # Determine date range for sync - reduced from 90 to 30 days to minimize duplicates
+        # Determine date range for sync - reduced to 14 days to prevent hanging
         start_date = datetime.utcnow().replace(
             hour=0, minute=0, second=0, microsecond=0)
-        end_date = start_date + timedelta(days=30)  # Reduced from 90 to 30 days
+        end_date = start_date + timedelta(days=14)  # Further reduced to 14 days to prevent hanging
 
         # Get events from the provider
         if source.provider_type == CalendarProvider.GOOGLE.value:
             # Use Google Calendar service
-            for calendar_id in source.calendars:
+            # Limit to first 2 calendars to prevent hanging
+            calendars_to_sync = source.calendars[:2] if len(source.calendars) > 2 else source.calendars
+            logger.info(f"Syncing {len(calendars_to_sync)} of {len(source.calendars)} calendars to prevent hanging")
+            
+            for calendar_id in calendars_to_sync:
                 sync_token = source.sync_tokens.get(calendar_id)
                 try:
                     result = await self.unified_service.google_service.get_events(
