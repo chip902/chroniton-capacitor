@@ -135,7 +135,7 @@ async def create_sync_source_from_tokens(tokens: Dict[str, Any], tenant_id: Opti
         await controller.initialize()
         
         # Create sync source
-        from sync.models import SyncSource
+        from sync.architecture import SyncSource
         
         source_id = f"google_oauth_{tenant_id or 'default'}"
         sync_source = SyncSource(
@@ -165,7 +165,7 @@ async def create_sync_source_from_tokens(tokens: Dict[str, Any], tenant_id: Opti
         if not config.destination:
             primary_calendar = next((cal for cal in calendar_selections if cal["primary"]), calendar_selections[0])
             
-            from sync.models import SyncDestination
+            from sync.architecture import SyncDestination
             destination = SyncDestination(
                 id="google_oauth_destination",
                 name="Google Calendar Destination (OAuth)",
