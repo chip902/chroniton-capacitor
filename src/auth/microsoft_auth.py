@@ -120,13 +120,14 @@ class MicrosoftGraphAuth:
         print(f"DEBUG: scopes type: {type(scopes_list)}, scopes value: {scopes_list}")
         
         # Build authorization URL manually to avoid MSAL frozenset issues
+        # NOTE: Do not include 'state' here - it will be added by the OAuth router
         auth_params = {
             'client_id': self.client_id,
             'response_type': 'code',
             'redirect_uri': self.redirect_uri,
             'scope': ' '.join(scopes_list),  # Join scopes with spaces
-            'state': tenant,
             'response_mode': 'query'
+            # 'state' is intentionally omitted - OAuth router will add it
         }
         
         authority_url = f"https://login.microsoftonline.com/{tenant}"
