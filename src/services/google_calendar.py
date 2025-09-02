@@ -111,24 +111,50 @@ class GoogleCalendarService:
                 params['timeMin'] = time_min
                 params['timeMax'] = time_max
             
-            # Get events
-            events_result = service.events().list(calendarId=calendar_id, **params).execute()
-            
             # Get calendar details for mapping to events
             calendar_details = service.calendars().get(calendarId=calendar_id).execute()
             calendar_name = calendar_details.get('summary', 'Unknown Calendar')
             
-            # Process events
+            # Process all events with pagination
             normalized_events = []
-            for event in events_result.get('items', []):
-                try:
-                    normalized_events.append(
-                        CalendarEvent.from_google(event, calendar_id, calendar_name)
-                    )
-                except Exception as event_error:
-                    logger.error(f"Error processing Google event {event.get('id')}: {event_error}")
-                    # Continue with next event
-                    continue
+            page_token = None
+            total_fetched = 0
+            
+            while True:
+                # Add page token if we have one
+                if page_token:
+                    params['pageToken'] = page_token
+                
+                # Get events for this page
+                events_result = service.events().list(calendarId=calendar_id, **params).execute()
+                
+                # Process events from this page
+                page_events = events_result.get('items', [])
+                for event in page_events:
+                    try:
+                        normalized_events.append(
+                            CalendarEvent.from_google(event, calendar_id, calendar_name)
+                        )
+                    except Exception as event_error:
+                        logger.error(f"Error processing Google event {event.get('id')}: {event_error}")
+                        # Continue with next event
+                        continue
+                
+                total_fetched += len(page_events)
+                logger.info(f"Fetched {len(page_events)} events from page, total so far: {total_fetched}")
+                
+                # Check if there are more pages
+                page_token = events_result.get('nextPageToken')
+                if not page_token:
+                    # No more pages, we're done
+                    break
+                
+                # Safety check to prevent infinite loops
+                if total_fetched > 10000:
+                    logger.warning(f"Stopping pagination after fetching {total_fetched} events to prevent excessive API calls")
+                    break
+            
+            logger.info(f"Total events fetched from calendar {calendar_id}: {len(normalized_events)}")
             
             # Return the events and next sync token
             return {

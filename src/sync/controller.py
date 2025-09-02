@@ -347,13 +347,14 @@ class CalendarSyncController:
             self.active_syncs.discard(source_id)
 
     async def _get_events_from_api_source(self, source: SyncSource) -> List[CalendarEvent]:
-        """Get events from a source using direct API access"""
+        """Get events from a source using direct API access with deduplication"""
         events = []
+        seen_provider_ids = set()  # Track unique events by provider ID
 
-        # Determine date range for sync
+        # Determine date range for sync - reduced from 90 to 30 days to minimize duplicates
         start_date = datetime.utcnow().replace(
             hour=0, minute=0, second=0, microsecond=0)
-        end_date = start_date + timedelta(days=90)  # Sync 90 days by default
+        end_date = start_date + timedelta(days=30)  # Reduced from 90 to 30 days
 
         # Get events from the provider
         if source.provider_type == CalendarProvider.GOOGLE.value:
@@ -370,7 +371,21 @@ class CalendarSyncController:
                     )
                     calendar_events = result.get('events', [])
                     logger.info(f"Calendar {calendar_id}: got {len(calendar_events)} events")
-                    events.extend(calendar_events)
+                    
+                    # Deduplicate events by provider_id
+                    unique_events = []
+                    for event in calendar_events:
+                        provider_id = event.provider_id if hasattr(event, 'provider_id') else None
+                        if provider_id and provider_id not in seen_provider_ids:
+                            seen_provider_ids.add(provider_id)
+                            unique_events.append(event)
+                        elif not provider_id:
+                            # Log warning but include event
+                            logger.warning(f"Event without provider_id: {event.title if hasattr(event, 'title') else 'Unknown'}")
+                            unique_events.append(event)
+                    
+                    logger.info(f"Calendar {calendar_id}: {len(unique_events)} unique events after deduplication")
+                    events.extend(unique_events)
 
                     # Update sync token
                     if result.get('nextSyncToken'):

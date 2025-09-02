@@ -966,6 +966,7 @@ async def get_all_events(
     """Get all imported events, optionally filtered by agent. Includes both agent events and OAuth sync source events."""
     try:
         all_events = []
+        seen_provider_ids = set()  # Track unique events by provider ID
         
         if agent_id:
             # Only return events for specific agent
@@ -984,7 +985,7 @@ async def get_all_events(
                     event_copy["source_type"] = "agent"
                     all_events.append(event_copy)
             
-            # ALSO get events from OAuth sync sources
+            # ALSO get events from OAuth sync sources with deduplication
             try:
                 config = await controller.load_configuration()
                 for source in config.sources:
@@ -993,6 +994,9 @@ async def get_all_events(
                             # Get events from this OAuth source
                             source_events = await controller._get_events_from_api_source(source)
                             logger.info(f"Got {len(source_events)} events from source {source.id} ({source.name})")
+                            
+                            # Deduplicate events
+                            unique_events = []
                             for event in source_events:
                                 # Convert CalendarEvent to dict
                                 if hasattr(event, 'dict'):
@@ -1002,11 +1006,26 @@ async def get_all_events(
                                 else:
                                     event_copy = dict(event)
                                 
-                                event_copy["source_id"] = source.id
-                                event_copy["source_name"] = source.name
-                                event_copy["source_type"] = "oauth"
-                                event_copy["provider"] = source.provider_type
-                                all_events.append(event_copy)
+                                # Check for duplicates using provider_id
+                                provider_id = event_copy.get('provider_id', '')
+                                if provider_id and provider_id not in seen_provider_ids:
+                                    seen_provider_ids.add(provider_id)
+                                    event_copy["source_id"] = source.id
+                                    event_copy["source_name"] = source.name
+                                    event_copy["source_type"] = "oauth"
+                                    event_copy["provider"] = source.provider_type
+                                    unique_events.append(event_copy)
+                                elif not provider_id:
+                                    # If no provider_id, include it but log warning
+                                    logger.warning(f"Event without provider_id: {event_copy.get('title', 'Unknown')}")
+                                    event_copy["source_id"] = source.id
+                                    event_copy["source_name"] = source.name
+                                    event_copy["source_type"] = "oauth"
+                                    event_copy["provider"] = source.provider_type
+                                    unique_events.append(event_copy)
+                            
+                            logger.info(f"After deduplication: {len(unique_events)} unique events from source {source.id}")
+                            all_events.extend(unique_events)
                         except Exception as e:
                             logger.warning(f"Failed to get events from source {source.id}: {e}")
                             continue
@@ -1020,7 +1039,8 @@ async def get_all_events(
                 "events": all_events,
                 "total_events": len(all_events),
                 "agents": list(stored_events.keys()),
-                "oauth_sources": len(config.sources) if 'config' in locals() else 0
+                "oauth_sources": len(config.sources) if 'config' in locals() else 0,
+                "duplicate_count": len(source_events) - len(unique_events) if 'source_events' in locals() and 'unique_events' in locals() else 0
             }
 
     except Exception as e:
@@ -1069,7 +1089,8 @@ async def get_events_fullcalendar_format(
                 }
                 all_events.append(fc_event)
 
-        # ALSO add OAuth sync source events
+        # ALSO add OAuth sync source events with deduplication
+        seen_provider_ids = set()  # Track unique events by provider ID
         try:
             config = await controller.load_configuration()
             for source in config.sources:
@@ -1077,6 +1098,10 @@ async def get_events_fullcalendar_format(
                     try:
                         # Get events from this OAuth source
                         source_events = await controller._get_events_from_api_source(source)
+                        logger.info(f"Got {len(source_events)} events from source {source.id} for fullcalendar")
+                        
+                        # Deduplicate events
+                        unique_count = 0
                         for event in source_events:
                             # Convert CalendarEvent to dict first
                             if hasattr(event, 'dict'):
@@ -1086,29 +1111,40 @@ async def get_events_fullcalendar_format(
                             else:
                                 event_dict = dict(event)
                             
-                            # Convert to FullCalendar format
-                            fc_event = {
-                                "id": event_dict.get("id", f"oauth_{source.id}_{event_dict.get('title', 'event')}"),
-                                "title": event_dict.get("title", "Untitled Event"),
-                                "start": event_dict.get("start_time"),
-                                "end": event_dict.get("end_time"),
-                                "allDay": event_dict.get("all_day", False),
-                                "backgroundColor": get_source_color(source.id),
-                                "borderColor": get_source_color(source.id),
-                                "extendedProps": {
-                                    "description": event_dict.get("description", ""),
-                                    "location": event_dict.get("location", ""),
-                                    "provider": source.provider_type,
-                                    "calendar_name": event_dict.get("calendar_name", source.name),
-                                    "source_name": source.name,
-                                    "source_id": source.id,
-                                    "source_type": "oauth",
-                                    "status": event_dict.get("status", "confirmed"),
-                                    "organizer": event_dict.get("organizer", {}),
-                                    "participants": event_dict.get("participants", [])
+                            # Check for duplicates using provider_id
+                            provider_id = event_dict.get('provider_id', '')
+                            if provider_id and provider_id not in seen_provider_ids:
+                                seen_provider_ids.add(provider_id)
+                                unique_count += 1
+                                
+                                # Convert to FullCalendar format
+                                fc_event = {
+                                    "id": event_dict.get("id", f"oauth_{source.id}_{event_dict.get('title', 'event')}"),
+                                    "title": event_dict.get("title", "Untitled Event"),
+                                    "start": event_dict.get("start_time"),
+                                    "end": event_dict.get("end_time"),
+                                    "allDay": event_dict.get("all_day", False),
+                                    "backgroundColor": get_source_color(source.id),
+                                    "borderColor": get_source_color(source.id),
+                                    "extendedProps": {
+                                        "description": event_dict.get("description", ""),
+                                        "location": event_dict.get("location", ""),
+                                        "provider": source.provider_type,
+                                        "calendar_name": event_dict.get("calendar_name", source.name),
+                                        "source_name": source.name,
+                                        "source_id": source.id,
+                                        "source_type": "oauth",
+                                        "status": event_dict.get("status", "confirmed"),
+                                        "organizer": event_dict.get("organizer", {}),
+                                        "participants": event_dict.get("participants", [])
+                                    }
                                 }
-                            }
-                            all_events.append(fc_event)
+                                all_events.append(fc_event)
+                            elif not provider_id:
+                                # Log warning for events without provider_id
+                                logger.warning(f"Event without provider_id in fullcalendar: {event_dict.get('title', 'Unknown')}")
+                        
+                        logger.info(f"After deduplication: {unique_count} unique events from source {source.id} for fullcalendar")
                     except Exception as e:
                         logger.warning(f"Failed to get events from OAuth source {source.id}: {e}")
                         continue
@@ -1188,6 +1224,69 @@ async def clear_agent_events(agent_id: str):
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Failed to clear events: {str(e)}"
+        )
+
+
+@router.post("/cleanup-duplicates")
+async def cleanup_duplicate_events(
+    controller: CalendarSyncController = Depends(get_sync_controller)
+):
+    """Clean up duplicate events and reset sync tokens to force a fresh sync"""
+    try:
+        # Clear all sync tokens to force fresh sync
+        config = await controller.load_configuration()
+        tokens_cleared = 0
+        
+        for source in config.sources:
+            if source.sync_tokens:
+                tokens_cleared += len(source.sync_tokens)
+                source.sync_tokens = {}  # Clear all sync tokens
+                logger.info(f"Cleared sync tokens for source {source.id}")
+        
+        # Save the updated configuration
+        await controller.save_configuration(config)
+        
+        # Clear agent events if any duplicates exist
+        total_agent_events = sum(len(events) for events in stored_events.values())
+        
+        # Get current events to analyze duplicates
+        all_events = []
+        seen_events = {}
+        duplicate_count = 0
+        
+        # Check for duplicates in OAuth sources
+        for source in config.sources:
+            if source.credentials and source.enabled:
+                try:
+                    source_events = await controller._get_events_from_api_source(source)
+                    for event in source_events:
+                        event_dict = event.dict() if hasattr(event, 'dict') else dict(event)
+                        # Create a unique key based on title, start_time, and calendar
+                        event_key = f"{event_dict.get('title', '')}_{event_dict.get('start_time', '')}_{event_dict.get('calendar_name', '')}"
+                        
+                        if event_key in seen_events:
+                            duplicate_count += 1
+                        else:
+                            seen_events[event_key] = event_dict
+                            all_events.append(event_dict)
+                except Exception as e:
+                    logger.error(f"Error checking events from source {source.id}: {e}")
+        
+        return {
+            "status": "success",
+            "message": "Cleaned up duplicate events and reset sync tokens",
+            "tokens_cleared": tokens_cleared,
+            "duplicates_found": duplicate_count,
+            "unique_events_remaining": len(all_events),
+            "total_agent_events": total_agent_events,
+            "action": "Please trigger a fresh sync to reload events"
+        }
+        
+    except Exception as e:
+        logger.error(f"Error cleaning up duplicates: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to cleanup duplicates: {str(e)}"
         )
 
 
