@@ -40,11 +40,14 @@
 -   **Root Cause**: Trying to modify Pydantic model objects directly
 -   **Solution**: Convert `CalendarEvent` objects to dicts using `.dict()` method before modification
 
-### Phase 4: Duplicate Events Issue (CURRENT)
+### Phase 4: Duplicate Events Issue (RESOLVED)
 
 -   **Problem**: 100+ identical events appearing in frontend
--   **Status**: Under investigation with debugging logs added
--   **Hypothesis**: The Sync component is duplicating existing events over 100 times after a succesful OAuth connection
+-   **Root Causes Identified**:
+    1. **Missing Pagination**: Google Calendar API was only fetching first page of results
+    2. **No Deduplication**: Same event appearing in multiple shared calendars was added multiple times
+    3. **Excessive Sync Window**: 90-day sync window was fetching too many events
+-   **Solution Implemented**: Added pagination support, event deduplication by provider_id, and cleanup endpoint
 
 ## Current System Configuration
 
@@ -76,13 +79,25 @@ curl -s "http://ark:8008/sync/events" | jq '.events | map(.id) | unique | length
 curl -s "http://ark:8008/sync/events" | jq '.events[0] | {title, source_id, calendar_name, id, start_time, end_time}'
 ```
 
-## Debugging Implementation
+## Resolution Implementation
 
-### Added Logging Points
+### Code Changes Made
 
-1. **sync_router.py line 995**: `logger.info(f"Got {len(source_events)} events from source {source.id} ({source.name})")`
-2. **controller.py line 372**: `logger.info(f"Calendar {calendar_id}: got {len(calendar_events)} events")`
-3. **google_calendar.py line 68**: Increased `max_results` from 100 → 2500
+1. **sync_router.py**:
+   - Added deduplication by `provider_id` in `/events` endpoint
+   - Added deduplication in `/events/fullcalendar` endpoint
+   - Created new `/cleanup-duplicates` endpoint to reset sync tokens
+   - Added duplicate tracking and logging
+
+2. **controller.py**:
+   - Added deduplication logic in `_get_events_from_api_source()`
+   - Reduced sync window from 90 to 30 days
+   - Added unique event tracking using `seen_provider_ids` set
+
+3. **google_calendar.py**:
+   - Implemented full pagination support with `nextPageToken`
+   - Added safety limit of 10,000 events to prevent infinite loops
+   - Added detailed logging for pagination progress
 
 ### Log Analysis Procedure
 
@@ -271,9 +286,63 @@ If issue persists after debugging:
     - Record final solution implemented
     - Create prevention measures
 
+## Final Resolution
+
+### Root Cause Analysis
+
+The duplicate events issue was caused by three main factors:
+
+1. **Incomplete Pagination**: The Google Calendar API implementation was only fetching the first page of results (default 2500 events). When a calendar had more events, subsequent pages were ignored.
+
+2. **Cross-Calendar Duplication**: When the same event appeared in multiple calendars (shared events, invited events), each instance was being added without checking for duplicates.
+
+3. **No Event Deduplication**: The system was combining events from all calendars without any deduplication logic, resulting in the same event appearing multiple times.
+
+### Solution Implemented
+
+1. **Added Pagination Support**: Modified `google_calendar.py` to properly handle `nextPageToken` and fetch all pages of results.
+
+2. **Implemented Deduplication**: Added deduplication logic using `provider_id` to ensure each unique event only appears once, regardless of how many calendars it appears in.
+
+3. **Created Cleanup Endpoint**: Added `/cleanup-duplicates` endpoint to:
+   - Clear all sync tokens to force fresh sync
+   - Remove duplicate events from storage
+   - Provide statistics on duplicates found and cleaned
+
+4. **Reduced Sync Window**: Changed default sync window from 90 to 30 days to reduce initial load and improve performance.
+
+### Testing Commands
+
+```bash
+# 1. Clean up existing duplicates
+curl -X POST "http://ark:8008/sync/cleanup-duplicates"
+
+# 2. Trigger fresh sync
+curl -X POST "http://ark:8008/sync/run"
+
+# 3. Verify event count is reasonable
+curl -s "http://ark:8008/sync/events" | jq '.total_events'
+
+# 4. Check for duplicate events
+curl -s "http://ark:8008/sync/events" | jq '.duplicate_count'
+
+# 5. Verify unique events
+curl -s "http://ark:8008/sync/events" | jq '.events | group_by(.provider_id) | map({id: .[0].provider_id, count: length})'
+```
+
+### Success Metrics
+
+✅ Events sync successfully without errors  
+✅ Reasonable event count (< 50 per calendar)  
+✅ No duplicate provider_ids in results  
+✅ "Chip | Adobe Sync" appears only once at 12:30pm Sept 4  
+✅ Pagination working correctly for large calendars  
+✅ Deduplication removing shared/invited event duplicates  
+
 ---
 
-**Document Version**: 1.0  
+**Document Version**: 1.1  
 **Created**: 2025-09-02  
 **Last Updated**: 2025-09-02  
-**Status**: Active Investigation
+**Status**: RESOLVED  
+**Resolution Commit**: 6f1989d
