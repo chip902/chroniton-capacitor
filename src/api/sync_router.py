@@ -1224,6 +1224,117 @@ async def clear_agent_events(agent_id: str):
         )
 
 
+@router.post("/cleanup-google-calendar-duplicates")
+async def cleanup_google_calendar_duplicates(
+    dry_run: bool = True,
+    controller: CalendarSyncController = Depends(get_sync_controller)
+):
+    """Remove duplicate events from Google Calendar itself (DANGEROUS - use dry_run=true first)"""
+    try:
+        config = await controller.load_configuration()
+        google_source = None
+        
+        # Find the Google OAuth source
+        for source in config.sources:
+            if source.provider_type == 'google' and source.credentials and source.enabled:
+                google_source = source
+                break
+                
+        if not google_source:
+            raise HTTPException(status_code=400, detail="No Google OAuth source found")
+        
+        total_events_checked = 0
+        total_duplicates_found = 0
+        events_to_delete = []
+        events_kept = {}
+        
+        # Process each calendar
+        for calendar_id in google_source.calendars:
+            logger.info(f"Checking calendar {calendar_id} for duplicates")
+            
+            try:
+                # Get all events from this calendar
+                result = await controller.unified_service.google_service.get_events(
+                    token_info=google_source.credentials,
+                    calendar_id=calendar_id,
+                    start_date=datetime.utcnow().replace(hour=0, minute=0, second=0, microsecond=0),
+                    end_date=datetime.utcnow().replace(hour=0, minute=0, second=0, microsecond=0) + timedelta(days=30)
+                )
+                
+                calendar_events = result.get('events', [])
+                total_events_checked += len(calendar_events)
+                logger.info(f"Found {len(calendar_events)} events in calendar {calendar_id}")
+                
+                # Group events by content (title + start_time + end_time)
+                for event in calendar_events:
+                    if hasattr(event, 'dict'):
+                        event_dict = event.dict()
+                    else:
+                        event_dict = dict(event)
+                    
+                    # Create content key
+                    content_key = f"{event_dict.get('title', '')}|{event_dict.get('start_time', '')}|{event_dict.get('end_time', '')}"
+                    
+                    if content_key not in events_kept:
+                        # First occurrence - keep this one
+                        events_kept[content_key] = {
+                            'calendar_id': calendar_id,
+                            'provider_id': event_dict.get('provider_id', ''),
+                            'title': event_dict.get('title', ''),
+                            'start_time': event_dict.get('start_time', '')
+                        }
+                    else:
+                        # Duplicate - mark for deletion
+                        total_duplicates_found += 1
+                        events_to_delete.append({
+                            'calendar_id': calendar_id,
+                            'provider_id': event_dict.get('provider_id', ''),
+                            'title': event_dict.get('title', ''),
+                            'start_time': event_dict.get('start_time', '')
+                        })
+                        
+            except Exception as e:
+                logger.error(f"Error checking calendar {calendar_id}: {e}")
+                continue
+        
+        # If not dry run, actually delete the duplicates
+        deleted_count = 0
+        if not dry_run and events_to_delete:
+            logger.warning(f"DELETING {len(events_to_delete)} duplicate events from Google Calendar")
+            
+            for event_to_delete in events_to_delete:
+                try:
+                    # Delete the event from Google Calendar
+                    service = await controller.unified_service.google_service.auth.get_calendar_service(google_source.credentials)
+                    service.events().delete(
+                        calendarId=event_to_delete['calendar_id'],
+                        eventId=event_to_delete['provider_id']
+                    ).execute()
+                    deleted_count += 1
+                    logger.info(f"Deleted duplicate event: {event_to_delete['title']} at {event_to_delete['start_time']}")
+                    
+                except Exception as e:
+                    logger.error(f"Failed to delete event {event_to_delete['provider_id']}: {e}")
+        
+        return {
+            "status": "success" if not dry_run else "dry_run_completed",
+            "dry_run": dry_run,
+            "total_events_checked": total_events_checked,
+            "duplicates_found": total_duplicates_found,
+            "events_deleted": deleted_count if not dry_run else 0,
+            "unique_events_remaining": len(events_kept),
+            "calendars_processed": len(google_source.calendars),
+            "warning": "Use dry_run=false to actually delete duplicates from Google Calendar" if dry_run else "Duplicates have been deleted from Google Calendar"
+        }
+        
+    except Exception as e:
+        logger.error(f"Error cleaning up Google Calendar duplicates: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to cleanup Google Calendar duplicates: {str(e)}"
+        )
+
+
 @router.post("/cleanup-duplicates")
 async def cleanup_duplicate_events(
     controller: CalendarSyncController = Depends(get_sync_controller)
